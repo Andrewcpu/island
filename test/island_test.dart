@@ -51,6 +51,15 @@ void main() {
     expect(containsHole(missing.sensor, missing.hole), isTrue);
   });
 
+  test('a tall cutout does not stretch the idle capsule', () {
+    const screen = Size(448, 998);
+    final hole = Rect.fromCenter(center: const Offset(224, 48), width: 28, height: 90);
+    final layout = placeHole(screen, [hole]);
+    expect(layout.sensor.height, closeTo(IslandMetrics.standard.idleHeight, 0.1));
+    expect(layout.metrics(IslandMetrics.standard).compactHeight, closeTo(IslandMetrics.standard.compactHeight, 0.1));
+    expect(layout.sensor.width, greaterThanOrEqualTo(hole.width));
+  });
+
   test('two activities split to the right of the sensor', () {
     const screen = Size(448, 998);
     final layout = placeHole(screen, [Rect.fromCenter(center: const Offset(224, 28), width: 28, height: 28)]);

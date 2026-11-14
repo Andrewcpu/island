@@ -137,13 +137,15 @@ HoleLayout placeHole(Size screen, List<Rect> cutouts, {IslandMetrics metrics = I
   }
 
   const pad = 4.0;
+  // Idle and compact stay a short iPhone capsule. A tall cutout must not stretch them into a bar.
   var width = math.max(metrics.idleWidth, hole.width + pad * 2);
-  var height = math.max(metrics.idleHeight, hole.height + pad * 2);
-  var top = metrics.top;
-  if (top > hole.top - pad) top = math.max(2, hole.top - pad);
-  if (top + height < hole.bottom + pad) {
-    height = hole.bottom + pad - top;
+  final height = metrics.idleHeight;
+  var top = hole.center.dy - height / 2;
+  if (hole.height + pad * 2 <= height) {
+    if (top > hole.top - pad) top = hole.top - pad;
+    if (top + height < hole.bottom + pad) top = hole.bottom + pad - height;
   }
+  top = math.max(0, top);
   final cx = hole.center.dx;
   var sensor = Rect.fromLTWH(cx - width / 2, top, width, height);
   if (sensor.right < hole.right + pad || sensor.left > hole.left - pad) {

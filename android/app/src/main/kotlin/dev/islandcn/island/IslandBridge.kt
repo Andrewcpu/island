@@ -115,14 +115,8 @@ object IslandBridge {
                 IslandMonitors.mediaAction(call.argument<String>("action") ?: "")
                 result.success(mapOf("ok" to true))
             }
-            "setLive" -> {
-                IslandOverlayService.note(context, call.argument<String>("title") ?: "Island", call.argument<String>("body") ?: "")
-                result.success(mapOf("ok" to true))
-            }
-            "clearLive" -> {
-                IslandOverlayService.note(context, "Island", "Showing over other apps")
-                result.success(mapOf("ok" to true))
-            }
+            "setLive" -> result.success(mapOf("ok" to true))
+            "clearLive" -> result.success(mapOf("ok" to true))
             "ensureOverlay" -> {
                 val allowed = Settings.canDrawOverlays(context)
                 if (allowed) IslandOverlayService.start(context)

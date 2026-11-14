@@ -146,12 +146,13 @@ class _OverlayShellState extends State<OverlayShell> {
 
   Rect _place(Rect tight) {
     final screen = widget.screen.width > 0 ? widget.screen : const Size(402, 874);
-    final needed = tight.inflate(12);
+    const pad = 2.0;
+    final needed = tight.inflate(pad);
     final current = _window;
-    if (current != null && current.contains(needed.topLeft) && current.contains(needed.bottomRight) && current.width <= needed.width + 96 && current.height <= needed.height + 96) {
+    if (current != null && current.contains(needed.topLeft) && current.contains(needed.bottomRight) && current.width <= needed.width + 8 && current.height <= needed.height + 8) {
       return current;
     }
-    var next = tight.inflate(36);
+    var next = needed;
     final left = next.left.clamp(0.0, screen.width - 8);
     final top = next.top.clamp(0.0, screen.height - 8);
     final right = next.right.clamp(left + 8, screen.width);

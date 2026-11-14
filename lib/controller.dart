@@ -828,13 +828,6 @@ class IslandController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _onStructure() {
-    final shown = engine.visible;
-    if (shown.isEmpty) {
-      platform.clearLive();
-      return;
-    }
-    final primary = shown.first;
-    platform.setLive(title: primary.label, body: shown.length > 1 ? shown[1].label : 'Live on the island');
     notifyListeners();
   }
 

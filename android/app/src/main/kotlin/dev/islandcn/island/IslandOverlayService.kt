@@ -3,7 +3,6 @@ package dev.islandcn.island
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.ComponentCallbacks
 import android.content.Context
@@ -18,6 +17,7 @@ import android.graphics.RectF
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -43,23 +43,18 @@ class IslandOverlayService : Service() {
     private var appliedY = Int.MIN_VALUE
     private var appliedW = Int.MIN_VALUE
     private var appliedH = Int.MIN_VALUE
+    private var shiftY = 0
+    private var calibrated = false
     var commands: MethodChannel? = null
     var ready: Boolean = false
-    private var title: String = "Island"
-    private var body: String = "Showing over other apps"
     private var callbacks: ComponentCallbacks? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         instance = this
-        title = intent?.getStringExtra("title") ?: title
-        body = intent?.getStringExtra("body") ?: body
         refreshForeground()
         if (!Settings.canDrawOverlays(this)) {
-            title = "Island needs permission"
-            body = "Allow display over other apps, then reopen Island."
-            refreshForeground()
             stopSelf()
             return START_NOT_STICKY
         }
@@ -67,9 +62,7 @@ class IslandOverlayService : Service() {
             try {
                 boot()
             } catch (error: Throwable) {
-                title = "Island failed to draw"
-                body = (error.message ?: error.javaClass.simpleName).take(120)
-                refreshForeground()
+                Log.e(TAG, "Island overlay failed to start", error)
                 showNativePill()
             }
         }
@@ -162,6 +155,30 @@ class IslandOverlayService : Service() {
         appliedY = params.y
         appliedW = params.width
         appliedH = params.height
+        host.post { calibrateShift() }
+    }
+
+    private fun calibrateShift() {
+        val host = root ?: return
+        if (calibrated) return
+        val params = host.layoutParams as? WindowManager.LayoutParams ?: return
+        val loc = IntArray(2)
+        host.getLocationOnScreen(loc)
+        calibrated = true
+        val delta = loc[1] - params.y
+        if (delta <= 1) return
+        shiftY = delta
+        if (hasRequest) {
+            applyFrame(requestedLeft, requestedTop, requestedWidth, requestedHeight)
+            return
+        }
+        params.y -= delta
+        try {
+            window?.updateViewLayout(host, params)
+            appliedY = params.y
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not lift the island into the status bar", error)
+        }
     }
 
     private fun initialParams(): WindowManager.LayoutParams {
@@ -172,13 +189,13 @@ class IslandOverlayService : Service() {
         val hole = cutout?.boundingRects?.minByOrNull { rect ->
             kotlin.math.abs(rect.centerX() - screen.centerX())
         }
-        val width = ((hole?.width() ?: 0) + (72 * density)).toInt().coerceIn((96 * density).toInt(), (220 * density).toInt())
-        val height = ((hole?.height() ?: 0) + (16 * density)).toInt().coerceIn((40 * density).toInt(), (64 * density).toInt())
+        val width = (96 * density).toInt()
+        val height = (37 * density).toInt()
         val centerX = hole?.centerX() ?: screen.centerX()
-        val centerY = hole?.centerY() ?: (20 * density).toInt()
+        val centerY = hole?.centerY() ?: (18 * density).toInt()
         return layoutParams(width, height).apply {
             x = (centerX - width / 2).coerceIn(0, (screen.width() - width).coerceAtLeast(0))
-            y = (centerY - height / 2).coerceAtLeast(0)
+            y = centerY - height / 2
         }
     }
 
@@ -200,7 +217,10 @@ class IslandOverlayService : Service() {
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             }
             if (Build.VERSION.SDK_INT >= 30) {
-                fitInsetsTypes = 0
+                // Zero types and sides, or the parent frame starts under the status bar and Gravity pushes the island down.
+                setFitInsetsTypes(0)
+                setFitInsetsSides(0)
+                setFitInsetsIgnoringVisibility(true)
             }
         }
     }
@@ -217,30 +237,42 @@ class IslandOverlayService : Service() {
     private fun notification(): Notification {
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL, "Island", NotificationManager.IMPORTANCE_LOW)
-            channel.description = "The island showing over other apps"
-            manager.createNotificationChannel(channel)
+            val existing = manager.getNotificationChannel(CHANNEL)
+            if (existing == null) {
+                val channel = NotificationChannel(CHANNEL, "Island", NotificationManager.IMPORTANCE_MIN)
+                channel.description = "Required while the island overlay is showing"
+                channel.setSound(null, null)
+                channel.enableVibration(false)
+                channel.enableLights(false)
+                channel.setShowBadge(false)
+                channel.lockscreenVisibility = Notification.VISIBILITY_SECRET
+                manager.createNotificationChannel(channel)
+            }
         }
-        val pending = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
         return NotificationCompat.Builder(this, CHANNEL)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle("Island")
+            .setSilent(true)
             .setOngoing(true)
-            .setContentIntent(pending)
             .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_DEFERRED)
             .build()
     }
 
     companion object {
-        private const val CHANNEL = "island.live"
+        private const val TAG = "IslandOverlay"
+        private const val CHANNEL = "island.fgs"
         private const val COMMANDS = "dev.islandcn/commands"
         private val queue = mutableListOf<Pair<String, Map<String, Any?>>>()
+        private var hasRequest = false
+        private var requestedLeft = 0f
+        private var requestedTop = 0f
+        private var requestedWidth = 0f
+        private var requestedHeight = 0f
 
         @Volatile var instance: IslandOverlayService? = null
         @Volatile var useMic: Boolean = false
@@ -251,17 +283,7 @@ class IslandOverlayService : Service() {
         }
 
         fun note(context: Context, title: String, body: String) {
-            val service = instance
-            if (service == null) {
-                val intent = Intent(context, IslandOverlayService::class.java)
-                    .putExtra("title", title)
-                    .putExtra("body", body)
-                ContextCompat.startForegroundService(context, intent)
-                return
-            }
-            service.title = title
-            service.body = body
-            service.refreshForeground()
+            if (instance == null) start(context)
         }
 
         fun setMic(context: Context?, on: Boolean) {
@@ -296,7 +318,7 @@ class IslandOverlayService : Service() {
             val density = service.resources.displayMetrics.density.toDouble().coerceAtLeast(1.0)
             return mapOf(
                 "left" to service.appliedX / density,
-                "top" to service.appliedY / density,
+                "top" to (service.appliedY + service.shiftY) / density,
                 "width" to service.appliedW / density,
                 "height" to service.appliedH / density,
             )
@@ -306,10 +328,15 @@ class IslandOverlayService : Service() {
             val service = instance ?: return
             val view = service.root ?: return
             val manager = service.window ?: return
+            hasRequest = true
+            requestedLeft = left
+            requestedTop = top
+            requestedWidth = width
+            requestedHeight = height
             val density = service.resources.displayMetrics.density
             val params = (view.layoutParams as? WindowManager.LayoutParams) ?: return
             val nextX = (left * density).toInt()
-            val nextY = (top * density).toInt()
+            val nextY = (top * density).toInt() - service.shiftY
             val nextW = (width * density).toInt().coerceAtLeast(1)
             val nextH = (height * density).toInt().coerceAtLeast(1)
             if (service.appliedX == nextX && service.appliedY == nextY && service.appliedW == nextW && service.appliedH == nextH) return
@@ -323,7 +350,8 @@ class IslandOverlayService : Service() {
                 service.appliedY = nextY
                 service.appliedW = nextW
                 service.appliedH = nextH
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                Log.w(TAG, "Overlay frame update failed", error)
             }
         }
     }
@@ -337,7 +365,7 @@ private class PillBackdrop(context: Context) : View(context) {
         val h = height.toFloat()
         if (w < 1f || h < 1f) return
         val density = resources.displayMetrics.density
-        val radius = if (h > w * 0.9f) 28f * density else h / 2f
+        val radius = (h / 2f).coerceAtMost(48f * density)
         canvas.drawRoundRect(RectF(0f, 0f, w, h), radius, radius, paint)
     }
 }

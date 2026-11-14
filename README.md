@@ -68,8 +68,8 @@ Denial leaves the rest of the app usable. Each live row explains the fallback.
 | `READ_CALENDAR` | Upcoming events. |
 | `RECORD_AUDIO` | Live microphone meter. |
 | `MODIFY_AUDIO_SETTINGS` | Speaker route for the player. |
-| `POST_NOTIFICATIONS` | Ongoing activity notification. |
-| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `FOREGROUND_SERVICE_MICROPHONE` | Keep the activity posted, and the mic type while recording. |
+| `POST_NOTIFICATIONS` | The one foreground-service notice Android requires. It is silent, minimum importance, and does not mirror the island. |
+| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `FOREGROUND_SERVICE_MICROPHONE` | Keep the overlay process alive, and the mic type while recording. |
 | `SYSTEM_ALERT_WINDOW` | The island overlay. Android opens a settings screen for this. It cannot be granted from a dialog. |
 
 ## Motion
