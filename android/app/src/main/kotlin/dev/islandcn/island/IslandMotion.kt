@@ -254,18 +254,10 @@ internal class IslandRig {
             val cx = safeW / 2
             DRect(cx - diameter / 2, 16.0, cx + diameter / 2, 16.0 + diameter)
         } else {
-            val topBand = cutouts.filter { it.top <= safeH * 0.3 }.ifEmpty { cutouts }
-            var hole = topBand.reduce { a, b ->
-                val ad = abs(a.centerX - safeW / 2)
-                val bd = abs(b.centerX - safeW / 2)
-                if (ad <= bd) a else b
-            }
-            for (rect in topBand) {
-                if (rect.overlaps(hole.inflate(8.0)) || abs(rect.centerX - hole.centerX) < 24) {
-                    hole = DRect(min(hole.left, rect.left), min(hole.top, rect.top), max(hole.right, rect.right), max(hole.bottom, rect.bottom))
-                }
-            }
-            hole
+            val topBand = cutouts.filter { it.top <= safeH * 0.3 && it.width > 0 && it.height > 0 }.ifEmpty { cutouts }
+            val nearCenter = topBand.filter { abs(it.centerX - safeW / 2) <= max(48.0, safeW * 0.2) }.ifEmpty { topBand }
+            // The bounding box can be a tall column. The lens is the circle at its top, not that box.
+            lensCircle(nearCenter.minBy { min(it.width, it.height) })
         }
         val pad = 4.0
         var width = max(94.85, raw.width + pad * 2)
@@ -291,6 +283,14 @@ internal class IslandRig {
         compactHeight = max(36.85, sensor.height)
         expandedTop = min(13.83, sensor.top)
         if (!::left.isInitialized) seed() else retarget(resize = true)
+    }
+
+    /** Square bounds of the circular lens. A taller cutout box does not extend the mask downward. */
+    private fun lensCircle(rect: DRect): DRect {
+        val diameter = min(rect.width, rect.height).coerceAtLeast(1.0)
+        val cx = rect.centerX
+        val cy = if (rect.height > diameter * 1.15) rect.top + diameter / 2 else rect.centerY
+        return DRect(cx - diameter / 2, cy - diameter / 2, cx + diameter / 2, cy + diameter / 2)
     }
 
     fun setReduced(value: Boolean) {

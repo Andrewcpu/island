@@ -5,7 +5,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.SystemClock
 import android.provider.Settings
@@ -428,10 +427,13 @@ class IslandPillView(context: Context) : View(context) {
         if (reveal <= 0f) return
         val slots = rig.slotRects()
         val clip = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
-        val hole = Path()
-        val opened = rig.hole.inflate(1.0)
-        hole.addOval(RectF(opened.left.toFloat(), opened.top.toFloat(), opened.right.toFloat(), opened.bottom.toFloat()), Path.Direction.CW)
-        clip.op(hole, Path.Op.DIFFERENCE)
+        val lens = rig.hole
+        val radius = (min(lens.width, lens.height) / 2.0 + 1.0).toFloat()
+        if (radius > 1f) {
+            val hole = Path()
+            hole.addCircle(lens.centerX.toFloat(), lens.centerY.toFloat(), radius, Path.Direction.CW)
+            clip.op(hole, Path.Op.DIFFERENCE)
+        }
         canvas.save()
         canvas.clipPath(clip)
         val alpha = (reveal * 255).toInt()

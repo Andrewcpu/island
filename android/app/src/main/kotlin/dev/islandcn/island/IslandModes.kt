@@ -238,8 +238,8 @@ internal object IslandModes {
         player.alpha = alpha
         playerSub.color = 0xFF898989.toInt()
         playerSub.alpha = alpha
-        trackLine(canvas, titleText, player, textLeft, textRight, pill.top + 47.3, hole, meter)
-        trackLine(canvas, artist, playerSub, textLeft, textRight, pill.top + 64.4, hole, meter)
+        trackLine(canvas, titleText, player, textLeft, textRight, pill.top + 47.3, meter)
+        trackLine(canvas, artist, playerSub, textLeft, textRight, pill.top + 64.4, meter)
         meter(canvas, meter, accent, 6, 2.4f, 1.9f, now, alpha, playing)
         val barTop = pill.top + 102.7
         small.color = 0xFF898989.toInt()
@@ -262,27 +262,15 @@ internal object IslandModes {
         musicGlyph(canvas, "forward", pill.centerX + 73.5, buttonY, 34.0, Color.WHITE, alpha)
     }
 
-    /**
-     * The line uses the island width. It steps aside for [avoid] only when the glyphs
-     * actually run into it. The camera is not a width limit: ink inside the cutout is
-     * masked, and the rest of the line keeps going.
-     */
-    private fun trackLine(canvas: Canvas, text: String, paint: Paint, left: Double, right: Double, baseline: Double, hole: DRect, avoid: DRect) {
+    /** The line uses the island width. It steps aside for [avoid] only when the glyphs run into it. */
+    private fun trackLine(canvas: Canvas, text: String, paint: Paint, left: Double, right: Double, baseline: Double, avoid: DRect) {
         val top = baseline + paint.ascent()
         val bottom = baseline + paint.descent()
         val span = DRect(left, top.toDouble(), right, bottom.toDouble())
         val limit = if (span.overlaps(avoid)) min(right, avoid.left - 6.0) else right
         val shown = ellipsize(text, paint, limit - left)
         if (shown.isEmpty()) return
-        val ink = DRect(left, top.toDouble(), left + paint.measureText(shown).toDouble(), bottom.toDouble())
-        if (!ink.overlaps(hole)) {
-            canvas.drawText(shown, left.toFloat(), baseline.toFloat(), paint)
-            return
-        }
-        canvas.save()
-        canvas.clipOutRect(hole.left.toFloat(), hole.top.toFloat(), hole.right.toFloat(), hole.bottom.toFloat())
         canvas.drawText(shown, left.toFloat(), baseline.toFloat(), paint)
-        canvas.restore()
     }
 
     /** Play and pause at 30pt, previous and next at 34pt. Even filled shapes, not stroked doodles. */
