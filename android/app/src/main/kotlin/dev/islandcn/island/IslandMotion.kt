@@ -249,30 +249,40 @@ internal class IslandRig {
     fun bindHole(screenW: Double, screenH: Double, cutouts: List<DRect>) {
         val safeW = if (screenW > 0) screenW else 402.0
         val safeH = if (screenH > 0) screenH else 874.0
-        val raw = if (cutouts.isEmpty()) {
+        val bounds = if (cutouts.isEmpty()) {
             val diameter = 28.0
             val cx = safeW / 2
             DRect(cx - diameter / 2, 16.0, cx + diameter / 2, 16.0 + diameter)
         } else {
-            val topBand = cutouts.filter { it.top <= safeH * 0.3 && it.width > 0 && it.height > 0 }.ifEmpty { cutouts }
-            val nearCenter = topBand.filter { abs(it.centerX - safeW / 2) <= max(48.0, safeW * 0.2) }.ifEmpty { topBand }
-            // The bounding box can be a tall column. The lens is the circle at its top, not that box.
-            lensCircle(nearCenter.minBy { min(it.width, it.height) })
+            val topBand = cutouts.filter { it.top <= safeH * 0.3 }.ifEmpty { cutouts }
+            var box = topBand.reduce { a, b ->
+                val ad = abs(a.centerX - safeW / 2)
+                val bd = abs(b.centerX - safeW / 2)
+                if (ad <= bd) a else b
+            }
+            for (rect in topBand) {
+                if (rect.overlaps(box.inflate(8.0)) || abs(rect.centerX - box.centerX) < 24) {
+                    box = DRect(min(box.left, rect.left), min(box.top, rect.top), max(box.right, rect.right), max(box.bottom, rect.bottom))
+                }
+            }
+            box
         }
         val pad = 4.0
-        var width = max(94.85, raw.width + pad * 2)
+        var width = max(94.85, bounds.width + pad * 2)
         val height = 36.84
-        var top = raw.centerY - height / 2
-        if (raw.height + pad * 2 <= height) {
-            if (top > raw.top - pad) top = raw.top - pad
-            if (top + height < raw.bottom + pad) top = raw.bottom + pad - height
+        var top = bounds.centerY - height / 2
+        if (bounds.height + pad * 2 <= height) {
+            if (top > bounds.top - pad) top = bounds.top - pad
+            if (top + height < bounds.bottom + pad) top = bounds.bottom + pad - height
         }
         top = max(0.0, top)
-        val cx = raw.centerX
-        if (cx - width / 2 > raw.left - pad || cx + width / 2 < raw.right + pad) {
-            width = max(width, raw.width + pad * 2)
+        val cx = bounds.centerX
+        if (cx - width / 2 > bounds.left - pad || cx + width / 2 < bounds.right + pad) {
+            width = max(width, bounds.width + pad * 2)
         }
-        hole = raw
+        // Same center as the cutout box, so the island stays on the camera. The mask is only the lens.
+        val diameter = min(bounds.width, bounds.height).coerceAtLeast(1.0)
+        hole = DRect(cx - diameter / 2, bounds.centerY - diameter / 2, cx + diameter / 2, bounds.centerY + diameter / 2)
         sensor = DRect(cx - width / 2, top, cx + width / 2, top + height)
         centerX = cx
         screenWidth = safeW
@@ -283,14 +293,6 @@ internal class IslandRig {
         compactHeight = max(36.85, sensor.height)
         expandedTop = min(13.83, sensor.top)
         if (!::left.isInitialized) seed() else retarget(resize = true)
-    }
-
-    /** Square bounds of the circular lens. A taller cutout box does not extend the mask downward. */
-    private fun lensCircle(rect: DRect): DRect {
-        val diameter = min(rect.width, rect.height).coerceAtLeast(1.0)
-        val cx = rect.centerX
-        val cy = if (rect.height > diameter * 1.15) rect.top + diameter / 2 else rect.centerY
-        return DRect(cx - diameter / 2, cy - diameter / 2, cx + diameter / 2, cy + diameter / 2)
     }
 
     fun setReduced(value: Boolean) {
