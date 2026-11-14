@@ -11,7 +11,7 @@ import android.service.notification.NotificationListenerService
 
 /** The live media session. Never substitutes a placeholder title. */
 object IslandMedia {
-    data class Track(val title: String, val artist: String, val playing: Boolean)
+    data class Track(val title: String, val artist: String, val playing: Boolean, val position: Long = 0L, val duration: Long = 0L)
 
     fun current(context: Context): Track? {
         val fromListener = IslandNotificationListener.instance?.let { sessionsFrom(it) }
@@ -54,13 +54,16 @@ object IslandMedia {
     private fun pick(controllers: List<MediaController>): Track? {
         data class Hit(val track: Track, val controls: MediaController.TransportControls)
         val tracks = controllers.mapNotNull { controller ->
-            val title = controller.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)?.trim().orEmpty()
+            val meta = controller.metadata
+            val title = meta?.getString(MediaMetadata.METADATA_KEY_TITLE)?.trim().orEmpty()
             if (title.isEmpty()) return@mapNotNull null
-            val artist = controller.metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST)?.trim().orEmpty()
+            val artist = meta?.getString(MediaMetadata.METADATA_KEY_ARTIST)?.trim().orEmpty()
             val playing = controller.playbackState?.state == PlaybackState.STATE_PLAYING
             val paused = controller.playbackState?.state == PlaybackState.STATE_PAUSED
             if (!playing && !paused) return@mapNotNull null
-            Hit(Track(title, artist, playing), controller.transportControls)
+            val duration = meta?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+            val position = controller.playbackState?.position ?: 0L
+            Hit(Track(title, artist, playing, position, duration), controller.transportControls)
         }
         val chosen = tracks.firstOrNull { it.track.playing } ?: tracks.firstOrNull() ?: return null
         IslandNotificationListener.controls = chosen.controls

@@ -38,8 +38,9 @@ class IslandPillView(context: Context) : View(context) {
     private var posted = false
     private var clock0 = 0L
     private var pressedButton: String? = null
-    private var decline = DRect(0.0, 0.0, 0.0, 0.0)
-    private var accept = DRect(0.0, 0.0, 0.0, 0.0)
+    private val hits = IslandModes.Hits()
+    private var mediaPosition = 0L
+    private var mediaDuration = 0L
     private var timerEnds = 0L
     private var timerLeft = 0L
     private var timerPaused = false
@@ -62,11 +63,6 @@ class IslandPillView(context: Context) : View(context) {
     }
     private val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x59000000.toInt() }
     private val compactPaint = text(15f, Color.WHITE, 600)
-    private val titlePaint = text(17f, Color.WHITE, 600)
-    private val detailPaint = text(13f, 0x99EBEBF5.toInt(), 500)
-    private val valuePaint = text(28f, Color.WHITE, 700)
-    private val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 1.6f; strokeCap = Paint.Cap.ROUND }
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
 
     private val frame = Choreographer.FrameCallback {
         posted = false
@@ -148,20 +144,20 @@ class IslandPillView(context: Context) : View(context) {
             "incomingCall" -> toggle("call") {
                 val caller = args["caller"]?.toString()?.ifBlank { null } ?: "Mochi"
                 callFrom = 0L
-                present(face("call", "phone", "", "Ring", caller, "Incoming call", "Ring", 0xFF31D259.toInt(), -1f, 96.0, 100), alert = true)
+                present(face("call", "phone", "", "Ring", caller, "Audio call", "Ring", 0xFF31D259.toInt(), -1f, 48.0, 100), alert = true)
             }
             "acceptCall" -> if (faces.containsKey("call")) accept()
             "endCall" -> if (sample == "call") clearAll()
             "startUpload" -> toggle("upload") {
                 uploadStarted = SystemClock.elapsedRealtime()
-                present(face("upload", "upload", "", "0%", "Uploading", "biscuit-in-the-sun.jpg", "0%", 0xFF0A84FF.toInt(), 0f, 64.0, 30))
+                present(face("upload", "upload", "", "0%", "Uploading", "biscuit-in-the-sun.jpg", "0%", 0xFF0A84FF.toInt(), 0f, 48.0, 30))
             }
             "startEta" -> {
                 val delivery = args["kind"]?.toString() == "delivery"
                 val key = if (delivery) "delivery" else "ride"
                 toggle(key) {
-                    if (delivery) present(face("eta", "box", "", "6 min", "Delivery", "Parcel · Door", "6 min", 0xFFFF9F0A.toInt(), -1f, 112.0, 25))
-                    else present(face("eta", "car", "", "6 min", "Alex Kim", "Blue hatchback · 8YQ 214", "6 min", 0xFFFF9F0A.toInt(), -1f, 112.0, 25))
+                    if (delivery) present(face("eta", "box", "", "6 mins", "Delivery", "Parcel · Door", "6 minutes", 0xFFFFD60A.toInt(), -1f, 132.0, 25))
+                    else present(face("eta", "car", "", "6 mins", "Alex Kim", "Blue hatchback · 8YQ 214", "6 minutes", 0xFF32D74B.toInt(), -1f, 132.0, 25))
                 }
             }
             "startRecording" -> {
@@ -172,11 +168,11 @@ class IslandPillView(context: Context) : View(context) {
                     recordHeld = 0L
                     recordEnds = SystemClock.elapsedRealtime()
                     val title = when (kind) {
-                        "screen" -> "Screen"
-                        "camera" -> "Camera"
+                        "screen" -> "Screen recording"
+                        "camera" -> "Video"
                         else -> "Voice memo"
                     }
-                    present(face("recording", "mic", "", "0:00", title, "Recording", "0:00", 0xFFFE4345.toInt(), -1f, 78.0, 70))
+                    present(face("recording", "mic", "", "0:00", title, "Recording", "0:00", 0xFFFF453A.toInt(), -1f, 48.0, 70))
                 }
             }
             "stopRecording" -> if (sample?.startsWith("record") == true) clearAll()
@@ -185,16 +181,16 @@ class IslandPillView(context: Context) : View(context) {
                 val send = args["direction"]?.toString() != "receive"
                 toggle(if (send) "send" else "receive") {
                     transferStarted = SystemClock.elapsedRealtime()
-                    present(face("transfer", if (send) "send" else "receive", "", "0%", if (send) "Sending" else "Receiving", "biscuit-in-the-sun.jpg", "0%", 0xFF46F0C6.toInt(), 0f, 72.0, 30))
+                    present(face("transfer", if (send) "send" else "receive", "", "0%", "Maya's Pixel", "biscuit-in-the-sun.jpg", "0%", 0xFF0A84FF.toInt(), 0f, 48.0, 30))
                 }
             }
             "showMessage" -> toggle("message") {
                 val sender = args["sender"]?.toString()?.ifBlank { null } ?: "Sam"
                 val body = args["body"]?.toString()?.ifBlank { null } ?: "The photos are in."
-                present(face("message", "message", "", "Now", sender, body, "Now", Color.WHITE, -1f, 72.0, 80), alert = true)
+                present(face("message", "message", "", "", sender, body, "", Color.WHITE, -1f, 48.0, 80), alert = true)
             }
             "pinEvent" -> toggle("event") {
-                present(face("calendar", "event", "", "15 min", "Design review", "Studio", "15 min", 0xFF0A84FF.toInt(), -1f, 78.0, 20))
+                present(face("calendar", "event", "", "15 min", "Design review", "Studio", "15 min", 0xFF0A84FF.toInt(), -1f, 48.0, 20))
             }
             "showBattery" -> toggle("battery") { showBattery() }
             "split" -> toggle("split") {
@@ -203,7 +199,7 @@ class IslandPillView(context: Context) : View(context) {
                 if (track != null) showTrack(track)
             }
             "startOrders" -> toggle("orders") {
-                present(face("order-a", "box", "", "12 min", "Order 1042", "Preparing", "12 min", 0xFFFF9F0A.toInt(), -1f, 64.0, 22, "orders"))
+                present(face("order-a", "box", "", "12 min", "Order 1042", "Preparing", "12 min", 0xFFFF9F0A.toInt(), -1f, 48.0, 22, "orders"))
             }
             "handoff" -> {
                 if (sample == "handoff") {
@@ -214,7 +210,7 @@ class IslandPillView(context: Context) : View(context) {
                 sample = "handoff"
                 faces.remove("order-a")
                 rig.end("order-a")
-                present(face("order-b", "box", "", "On way", "Order 1043", "Out for delivery", "On way", 0xFFFF9F0A.toInt(), -1f, 64.0, 22, "orders"), alert = true)
+                present(face("order-b", "box", "", "On way", "Order 1043", "Out for delivery", "On way", 0xFFFF9F0A.toInt(), -1f, 48.0, 22, "orders"), alert = true)
             }
             else -> Unit
         }
@@ -252,7 +248,16 @@ class IslandPillView(context: Context) : View(context) {
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                pressedButton = if (rig.expanded && contains(decline, x, y)) "decline" else if (rig.expanded && contains(accept, x, y)) "accept" else null
+                pressedButton = when {
+                    !rig.expanded -> null
+                    contains(hits.decline, x, y) -> "decline"
+                    contains(hits.accept, x, y) -> "accept"
+                    contains(hits.pause, x, y) -> "pause"
+                    contains(hits.cancel, x, y) -> "cancel"
+                    contains(hits.stop, x, y) -> "stop"
+                    contains(hits.toggle, x, y) -> "toggle"
+                    else -> null
+                }
                 rig.pointerUp()
                 kick()
                 return true
@@ -321,125 +326,27 @@ class IslandPillView(context: Context) : View(context) {
         clip.op(hole, Path.Op.DIFFERENCE)
         canvas.save()
         canvas.clipPath(clip)
-        compactPaint.alpha = (reveal * 255).toInt()
-        titlePaint.alpha = compactPaint.alpha
-        detailPaint.alpha = compactPaint.alpha
-        valuePaint.alpha = compactPaint.alpha
-        if (rig.kind == Kind.EXPANDED) drawExpanded(canvas, face, pill) else {
-            drawEar(canvas, face.glyph, face.lead, slots.first, false)
-            drawEar(canvas, "", face.trail, slots.second, true)
-        }
+        val alpha = (reveal * 255).toInt()
+        val elapsed = if (mediaDuration > 0L) clock(mediaPosition) else ""
+        val remaining = if (mediaDuration > 0L) "−${clock((mediaDuration - mediaPosition).coerceAtLeast(0))}" else ""
+        IslandModes.draw(
+            canvas, face.id, face.title, face.detail, face.value, face.trail, face.accent, face.progress,
+            face.glyph, elapsed, remaining, rig.kind, pill, rig.hole, slots.first, slots.second, rig.now, hits, alpha,
+        )
         canvas.restore()
         val second = faces[rig.secondary?.id]
         if (second != null && bubble != null && rig.kind == Kind.MINIMAL) {
             val bubbleClip = continuousRect(bubble, bubble.height / 2, 0.72)
             canvas.save()
             canvas.clipPath(bubbleClip)
-            val lead = DRect(bubble.left + 6.42, bubble.centerY - 11, bubble.left + 6.42 + 22, bubble.centerY + 11)
-            drawEar(canvas, second.glyph, second.lead, lead, false)
-            val room = bubble.right - 7.175 - (lead.right + 6.085)
-            val trailW = min(compactPaint.measureText(second.trail).toDouble(), room)
-            val trail = DRect(bubble.right - 7.175 - trailW, bubble.centerY - 10, bubble.right - 7.175, bubble.centerY + 10)
-            if (!trail.overlaps(rig.hole)) drawEar(canvas, "", second.trail, trail, true)
+            IslandModes.drawBubble(canvas, second.id, second.title, second.accent, second.progress, bubble, rig.now, alpha)
             canvas.restore()
-        }
-    }
-
-    private fun drawExpanded(canvas: Canvas, face: Face, pill: DRect) {
-        val hole = rig.hole
-        val left = pill.left + 18.5
-        val right = pill.right - 17.81
-        val titleTop = pill.top + 18.18
-        val titleLimit = hole.left - 8
-        if (titleLimit - left > 12) {
-            canvas.drawText(ellipsize(face.title, titlePaint, titleLimit - left), left.toFloat(), (titleTop - titlePaint.ascent()).toFloat(), titlePaint)
-        }
-        val detailTop = max(hole.bottom + 1.33, titleTop + 24)
-        if (detailTop + 16 < pill.bottom - 18) {
-            canvas.drawText(ellipsize(face.detail, detailPaint, right - left), left.toFloat(), (detailTop - detailPaint.ascent()).toFloat(), detailPaint)
-        }
-        valuePaint.color = face.accent
-        val value = ellipsize(face.value, valuePaint, 88.0)
-        var vx = right - valuePaint.measureText(value)
-        if (vx < hole.right + 8) vx = hole.right + 8
-        if (vx + valuePaint.measureText(value) <= right + 1) {
-            canvas.drawText(value, vx.toFloat(), (titleTop - valuePaint.ascent()).toFloat(), valuePaint)
-        }
-        if (face.id == "call" && face.value == "Ring") {
-            val r = 25.0
-            val cy = pill.bottom - 36
-            decline = DRect(pill.centerX - 78 - r, cy - r, pill.centerX - 78 + r, cy + r)
-            accept = DRect(pill.centerX + 78 - r, cy - r, pill.centerX + 78 + r, cy + r)
-            if (!decline.overlaps(hole)) {
-                fillPaint.color = 0xFFFE4345.toInt()
-                canvas.drawOval(decline.toRect(), fillPaint)
-                drawCentered(canvas, "Decline", decline, compactPaint)
-            }
-            if (!accept.overlaps(hole)) {
-                fillPaint.color = 0xFF31D259.toInt()
-                canvas.drawOval(accept.toRect(), fillPaint)
-                drawCentered(canvas, "Accept", accept, compactPaint)
-            }
-        } else {
-            decline = DRect(0.0, 0.0, 0.0, 0.0)
-            accept = DRect(0.0, 0.0, 0.0, 0.0)
-        }
-        if (face.progress >= 0f) {
-            val bar = RectF(left.toFloat(), (pill.bottom - 22).toFloat(), right.toFloat(), (pill.bottom - 18).toFloat())
-            fillPaint.color = 0x33FFFFFF
-            canvas.drawRoundRect(bar, 3f, 3f, fillPaint)
-            bar.right = bar.left + (right - left).toFloat() * face.progress.coerceIn(0f, 1f)
-            fillPaint.color = face.accent
-            canvas.drawRoundRect(bar, 3f, 3f, fillPaint)
-        }
-    }
-
-    private fun drawEar(canvas: Canvas, glyph: String, label: String, slot: DRect?, trail: Boolean) {
-        val rect = slot ?: return
-        if (rect.overlaps(rig.hole) || rect.width < 1) return
-        if (label.isNotEmpty()) {
-            val paint = compactPaint
-            paint.color = if (trail) (faces[rig.primary?.id]?.accent ?: Color.WHITE) else Color.WHITE
-            paint.alpha = titlePaint.alpha
-            val text = ellipsize(label, paint, rect.width)
-            val baseline = rect.centerY - (paint.ascent() + paint.descent()) / 2.0
-            val x = if (trail) rect.right - paint.measureText(text) else rect.left
-            canvas.drawText(text, x.toFloat(), baseline.toFloat(), paint)
-        } else if (glyph.isNotEmpty()) {
-            drawGlyph(canvas, glyph, rect)
-        }
-    }
-
-    private fun drawCentered(canvas: Canvas, text: String, rect: DRect, paint: Paint) {
-        paint.color = Color.WHITE
-        paint.alpha = 255
-        val x = rect.centerX - paint.measureText(text) / 2.0
-        val y = rect.centerY - (paint.ascent() + paint.descent()) / 2.0
-        canvas.drawText(text, x.toFloat(), y.toFloat(), paint)
-    }
-
-    private fun drawGlyph(canvas: Canvas, glyph: String, rect: DRect) {
-        val cx = rect.centerX.toFloat()
-        val cy = rect.centerY.toFloat()
-        val r = (min(rect.width, rect.height) / 2.0).toFloat().coerceAtMost(11f)
-        glyphPaint.color = Color.WHITE
-        fillPaint.color = Color.WHITE
-        when (glyph) {
-            "timer" -> canvas.drawCircle(cx, cy, r * 0.72f, glyphPaint)
-            "note" -> {
-                canvas.drawCircle(cx - r * 0.25f, cy + r * 0.28f, r * 0.28f, fillPaint)
-                canvas.drawLine(cx + r * 0.02f, cy + r * 0.28f, cx + r * 0.02f, cy - r * 0.55f, glyphPaint)
-                canvas.drawLine(cx + r * 0.02f, cy - r * 0.55f, cx + r * 0.45f, cy - r * 0.35f, glyphPaint)
-            }
-            "phone" -> canvas.drawCircle(cx, cy, r * 0.7f, glyphPaint)
-            "car", "box", "mic", "upload", "message", "event", "battery", "send", "receive" -> canvas.drawCircle(cx, cy, r * 0.7f, glyphPaint)
-            else -> canvas.drawCircle(cx, cy, r * 0.55f, fillPaint)
         }
     }
 
     private fun onTap(id: String) {
         when (pressedButton) {
-            "decline" -> {
+            "decline", "cancel", "stop" -> {
                 clearAll()
                 return
             }
@@ -447,7 +354,20 @@ class IslandPillView(context: Context) : View(context) {
                 accept()
                 return
             }
+            "pause" -> {
+                timerPaused = !timerPaused
+                if (timerPaused) timerLeft = (timerEnds - SystemClock.elapsedRealtime()).coerceAtLeast(0)
+                else timerEnds = SystemClock.elapsedRealtime() + timerLeft
+                refreshTimer()
+                return
+            }
+            "toggle" -> {
+                val face = faces["now-playing"] ?: return
+                IslandMonitors.mediaAction(if (face.value == "Playing") "pause" else "play")
+                return
+            }
         }
+        if (rig.expanded) return
         when (id) {
             "timer" -> {
                 timerPaused = !timerPaused
@@ -497,6 +417,7 @@ class IslandPillView(context: Context) : View(context) {
                 val label = clock(left)
                 timer.trail = label
                 timer.value = label
+                timer.progress = left.toFloat() / (5 * 60 * 1000f)
             }
         }
         if (timerDoneAt > 0 && rig.now >= timerDoneAt) {
@@ -552,15 +473,21 @@ class IslandPillView(context: Context) : View(context) {
         timerLeft = 5 * 60 * 1000L
         timerEnds = SystemClock.elapsedRealtime() + timerLeft
         timerDoneAt = 0.0
-        present(face("timer", "timer", "", "5:00", "Timer", "5 min timer", "5:00", Color.WHITE, -1f, 56.0, 50))
+        present(face("timer", "timer", "", "5:00", "Timer", "5 min timer", "5:00", 0xFFFF9F0A.toInt(), 1f, 50.0, 50))
     }
 
     private fun showTrack(track: IslandMedia.Track) {
         val state = if (track.playing) "Playing" else "Paused"
         val artist = track.artist.ifBlank { state }
+        mediaPosition = track.position
+        mediaDuration = track.duration
+        val fraction = if (track.duration > 0L) track.position.toFloat() / track.duration else 0f
         val existing = faces["now-playing"]
-        if (existing != null && existing.title == track.title && existing.detail == artist && existing.value == state) return
-        present(face("now-playing", "note", track.title, state, track.title, artist, state, 0xFF46F0C6.toInt(), -1f, 144.0, 40))
+        if (existing != null && existing.title == track.title && existing.detail == artist && existing.value == state) {
+            existing.progress = fraction
+            return
+        }
+        present(face("now-playing", "note", "", "", track.title, artist, state, IslandModes.coverAccent(track.title), fraction, 144.0, 40))
     }
 
     private fun showBattery() {
@@ -569,8 +496,22 @@ class IslandPillView(context: Context) : View(context) {
         val scale = (battery["scale"] as? Number)?.toInt()?.coerceAtLeast(1) ?: 100
         val percent = (level * 100 / scale).coerceIn(0, 100)
         val charging = battery["charging"] == true
-        val title = if (charging) "Charging" else "Battery"
-        present(face("battery", "battery", title, "$percent%", title, if (charging) "Plugged in" else "Battery", "$percent%", 0xFF53FA6D.toInt(), -1f, 64.0, 10))
+        val title = when {
+            charging && percent >= 100 -> "Charged"
+            charging -> "Charging"
+            else -> "Battery"
+        }
+        val detail = when {
+            charging -> "Plugged in"
+            percent < 20 -> "Low battery"
+            else -> "Not charging"
+        }
+        val accent = when {
+            charging -> 0xFF53FA6D.toInt()
+            percent < 20 -> 0xFFFF453A.toInt()
+            else -> Color.WHITE
+        }
+        present(face("battery", "battery", title, "$percent%", title, detail, "$percent%", accent, -1f, 48.0, 10))
     }
 
     private fun present(face: Face, alert: Boolean = false) {
@@ -609,12 +550,26 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     private fun specOf(face: Face): Spec {
-        val leadW = when {
-            face.lead.isNotEmpty() -> compactPaint.measureText(face.lead).toDouble().coerceAtMost(72.0)
-            face.glyph.isNotEmpty() -> 22.0
-            else -> 0.0
+        val (leadW, trailW) = when (face.id) {
+            "timer", "timer-done" -> 22.0 to 48.0
+            "now-playing" -> 22.0 to 24.0
+            "call" -> if (face.value == "Ring") 22.0 to 22.0 else 66.0 to 66.0
+            "battery" -> 72.0 to 72.0
+            "eta" -> 22.0 to 56.0
+            "recording" -> if (face.title == "Voice memo") 36.0 to 48.0 else 22.0 to 48.0
+            "upload" -> 24.0 to 22.0
+            "transfer", "message" -> 22.0 to 22.0
+            "calendar", "order-a", "order-b" -> 22.0 to 52.0
+            else -> {
+                val lead = when {
+                    face.lead.isNotEmpty() -> compactPaint.measureText(face.lead).toDouble().coerceAtMost(72.0)
+                    face.glyph.isNotEmpty() -> 22.0
+                    else -> 0.0
+                }
+                val trail = if (face.trail.isEmpty()) 0.0 else compactPaint.measureText(face.trail).toDouble().coerceAtMost(72.0)
+                lead to trail
+            }
         }
-        val trailW = if (face.trail.isEmpty()) 0.0 else compactPaint.measureText(face.trail).toDouble().coerceAtMost(72.0)
         return Spec(face.id, face.priority, 0, face.group, leadW, trailW, face.minimal, face.body)
     }
 
@@ -679,14 +634,6 @@ class IslandPillView(context: Context) : View(context) {
         return "%d:%02d".format(total / 60, total % 60)
     }
 
-    private fun ellipsize(text: String, paint: Paint, max: Double): String {
-        if (max <= 0) return ""
-        if (paint.measureText(text) <= max) return text
-        var end = text.length
-        while (end > 0 && paint.measureText(text.substring(0, end) + "…") > max) end--
-        return if (end == 0) "…" else text.substring(0, end) + "…"
-    }
-
     private fun text(size: Float, color: Int, weight: Int) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.color = color
         textSize = size
@@ -696,8 +643,6 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     private fun contains(rect: DRect, x: Double, y: Double) = x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
-
-    private fun DRect.toRect() = RectF(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
 
     private class Face(
         val id: String,

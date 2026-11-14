@@ -45,7 +45,7 @@ Every islandcn preset is here, plus messages and calendar.
 | Messages | Compact sender and body, then an expanded alert. | Notification listener for message notifications, and `SMS_RECEIVED` when SMS permission is granted. The "Message" chip uses that same path. |
 | Calendar | Upcoming event, compact and expanded. | `CalendarContract.Instances` for the next 18 hours (`READ_CALENDAR`). An event inside 20 minutes is shown on its own. If nothing is readable, a sample event is available from the Event chip. |
 | Timer | Countdown, pause, cancel, and a "time's up" alert. | In-app. |
-| Now playing | Artwork, transport, scrubber, output route. | A media session from the notification listener when one is posted. Otherwise the sample playlist (Low Tide Radio, Saltwater Static, Glass Pier) with generated artwork. Output toggles speakerphone (`MODIFY_AUDIO_SETTINGS`); a carrier call may ignore it. |
+| Now playing | 22pt artwork and a level meter when compact; expanded art, title, artist, meter, scrubber, and transport. | The active media session (playing or paused) from the notification listener. If nothing is playing, the Music chip does nothing and no title is invented. |
 | Upload | Progress ring, stop, then a check. | Simulated file `biscuit-in-the-sun.jpg`. |
 | ETA | Ride or delivery, minutes, and a message button. | Simulated. islandcn has no turn-by-turn navigation mode. |
 | Recording | Audio, screen, or camera. Stop returns to idle. | Audio uses `AudioRecord` plus a microphone foreground service (`RECORD_AUDIO`). If the mic is denied, the same meter runs on a simulated level. Screen and camera are the island UI with a simulated meter. `MediaProjection` is not requested. |

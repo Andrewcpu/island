@@ -1,0 +1,634 @@
+package dev.islandcn.island
+
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
+import kotlin.math.min
+import kotlin.math.sin
+
+/**
+ * Each islandcn preset, at the sizes in its activity file. Compact content is drawn
+ * in the ear slots; expanded content uses that preset's measured row.
+ */
+internal object IslandModes {
+    class Hits {
+        var decline = DRect(0.0, 0.0, 0.0, 0.0)
+        var accept = DRect(0.0, 0.0, 0.0, 0.0)
+        var pause = DRect(0.0, 0.0, 0.0, 0.0)
+        var cancel = DRect(0.0, 0.0, 0.0, 0.0)
+        var stop = DRect(0.0, 0.0, 0.0, 0.0)
+        var toggle = DRect(0.0, 0.0, 0.0, 0.0)
+
+        fun clear() {
+            decline = DRect(0.0, 0.0, 0.0, 0.0)
+            accept = decline
+            pause = decline
+            cancel = decline
+            stop = decline
+            toggle = decline
+        }
+    }
+
+    private val compact = text(15f, 600, -0.0f)
+    private val title = text(17f, 600, -0.045f)
+    private val titleRegular = text(17f, 400, -0.045f)
+    private val subtitle = text(15f, 400, 0f)
+    private val caption = text(13f, 500, 0f)
+    private val value = text(34f, 700, -0.09f)
+    private val small = text(11f, 400, 0f)
+    private val player = text(16f, 600, 0f)
+    private val playerSub = text(16f, 400, 0f)
+    private val time22 = text(22f, 400, -0.11f)
+    private val label14 = text(14f, 400, 0f)
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+
+    fun draw(
+        canvas: Canvas,
+        id: String,
+        titleText: String,
+        detail: String,
+        valueText: String,
+        trail: String,
+        accent: Int,
+        progress: Float,
+        glyph: String,
+        elapsed: String,
+        remaining: String,
+        kind: Kind,
+        pill: DRect,
+        hole: DRect,
+        leading: DRect?,
+        trailing: DRect?,
+        now: Double,
+        hits: Hits,
+        alpha: Int,
+    ) {
+        hits.clear()
+        if (kind == Kind.EXPANDED) {
+            drawExpanded(canvas, id, titleText, detail, valueText, accent, progress, glyph, elapsed, remaining, pill, hole, now, hits, alpha)
+        } else {
+            drawCompact(canvas, id, titleText, detail, valueText, trail, accent, progress, leading, trailing, now, alpha)
+        }
+    }
+
+    fun drawBubble(canvas: Canvas, id: String, seed: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int) {
+        val lead = DRect(bubble.left + 6.42, bubble.centerY - 11, bubble.left + 28.42, bubble.centerY + 11)
+        when (id) {
+            "timer", "timer-done" -> ring(canvas, lead, progress.coerceIn(0f, 1f), accent, tint(accent, 0.25f), 2.4f, alpha)
+            "now-playing" -> {
+                artwork(canvas, seed, lead, 6f, alpha)
+                meter(canvas, DRect(bubble.right - 28, bubble.centerY - 8.5, bubble.right - 7.2, bubble.centerY + 8.5), accent, 4, 2.4f, 1.9f, now, alpha, playing = true)
+            }
+            "upload", "transfer" -> ring(canvas, DRect(bubble.centerX - 10, bubble.centerY - 10, bubble.centerX + 10, bubble.centerY + 10), progress, accent, 0x29FFFFFF, 2.6f, alpha)
+            "recording" -> meter(canvas, DRect(bubble.centerX - 11, bubble.centerY - 8, bubble.centerX + 11, bubble.centerY + 8), accent, 5, 2f, 2f, now, alpha, playing = true)
+            else -> glyph(canvas, bubbleGlyph(id, accent), lead, accent, alpha)
+        }
+    }
+
+    private fun drawCompact(
+        canvas: Canvas,
+        id: String,
+        titleText: String,
+        detail: String,
+        valueText: String,
+        trail: String,
+        accent: Int,
+        progress: Float,
+        leading: DRect?,
+        trailing: DRect?,
+        now: Double,
+        alpha: Int,
+    ) {
+        val lead = leading ?: return
+        val trailRect = trailing
+        when (id) {
+            "timer", "timer-done" -> {
+                glyph(canvas, "timer", lead, accent, alpha)
+                textIn(canvas, trail, compact, accent, trailRect, true, alpha)
+            }
+            "now-playing" -> {
+                artwork(canvas, "$titleText $detail", lead, 6f, alpha)
+                if (trailRect != null) meter(canvas, trailRect, accent, 6, 2.4f, 1.9f, now, alpha, valueText == "Playing")
+            }
+            "call" -> {
+                if (valueText == "Ring") {
+                    avatar(canvas, titleText, lead, alpha)
+                    glyph(canvas, "phone", trailRect, 0xFF31D259.toInt(), alpha)
+                } else {
+                    glyph(canvas, "phone", DRect(lead.left, lead.centerY - 9, lead.left + 18, lead.centerY + 9), 0xFF76FB73.toInt(), alpha)
+                    textIn(canvas, valueText, compact, 0xFF76FB73.toInt(), DRect(lead.left + 20.5, lead.top, lead.right, lead.bottom), false, alpha)
+                    if (trailRect != null) meter(canvas, trailRect, 0xFF76FB73.toInt(), 8, 2.25f, 1.13f, now, alpha, true, twoTone = true)
+                }
+            }
+            "battery" -> {
+                textIn(canvas, titleText, compact, Color.WHITE, lead, false, alpha)
+                if (trailRect != null) batteryRow(canvas, trailRect, valueText, accent, titleText == "Charging" || titleText == "Charged", alpha)
+            }
+            "eta" -> {
+                glyph(canvas, if (accent == 0xFFFFD60A.toInt()) "box" else "car", lead, accent, alpha)
+                textIn(canvas, trail, subtitle, accent, trailRect, true, alpha)
+            }
+            "recording" -> {
+                if (titleText == "Voice memo") meter(canvas, lead, accent, 13, 1.4f, 1.35f, now, alpha, detail != "Paused", envelope = true)
+                else dot(canvas, lead, accent, detail != "Paused", alpha)
+                textIn(canvas, trail, subtitle, if (detail == "Paused") 0x9EEBEBF5.toInt() else accent, trailRect, true, alpha)
+            }
+            "upload" -> {
+                thumb(canvas, lead, accent, alpha)
+                if (trailRect != null) ring(canvas, trailRect, progress, accent, 0x29FFFFFF, 2.6f, alpha, valueText.removeSuffix("%"))
+            }
+            "transfer" -> {
+                glyph(canvas, "phone", lead, accent, alpha)
+                if (trailRect != null) ring(canvas, trailRect, progress, accent, 0x29FFFFFF, 2.6f, alpha)
+            }
+            "message" -> {
+                avatar(canvas, titleText, lead, alpha)
+                glyph(canvas, "message", trailRect, Color.WHITE, alpha)
+            }
+            "calendar" -> {
+                glyph(canvas, "event", lead, accent, alpha)
+                textIn(canvas, trail, compact, Color.WHITE, trailRect, true, alpha)
+            }
+            "order-a", "order-b" -> {
+                glyph(canvas, "box", lead, accent, alpha)
+                textIn(canvas, trail, compact, accent, trailRect, true, alpha)
+            }
+            else -> {
+                textIn(canvas, titleText, compact, Color.WHITE, lead, false, alpha)
+                textIn(canvas, trail, compact, accent, trailRect, true, alpha)
+            }
+        }
+    }
+
+    private fun drawExpanded(
+        canvas: Canvas,
+        id: String,
+        titleText: String,
+        detail: String,
+        valueText: String,
+        accent: Int,
+        progress: Float,
+        glyph: String,
+        elapsed: String,
+        remaining: String,
+        pill: DRect,
+        hole: DRect,
+        now: Double,
+        hits: Hits,
+        alpha: Int,
+    ) {
+        val contentTop = pill.top + 18.18
+        val right = pill.right - 17.81
+        when (id) {
+            "timer", "timer-done" -> timerExpanded(canvas, pill, contentTop, right, titleText, valueText, accent, detail == "Paused", hits, alpha)
+            "now-playing" -> playerExpanded(canvas, pill, titleText, detail, accent, valueText == "Playing", progress, elapsed, remaining, now, hits, alpha)
+            "call" -> callExpanded(canvas, pill, titleText, detail, valueText, hits, alpha)
+            "battery" -> batteryExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
+            "eta" -> etaExpanded(canvas, pill, titleText, detail, valueText, accent, hole, alpha)
+            "recording" -> recordingExpanded(canvas, pill, titleText, valueText, accent, detail != "Paused", hits, now, alpha)
+            "upload", "transfer" -> mediaExpanded(canvas, pill, id, glyph, titleText, detail, valueText, accent, progress, alpha)
+            "message" -> personExpanded(canvas, pill, titleText, detail, hole, alpha)
+            "calendar" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, hole, alpha)
+            "order-a", "order-b" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, hole, alpha)
+            else -> personExpanded(canvas, pill, titleText, detail, hole, alpha)
+        }
+    }
+
+    private fun timerExpanded(canvas: Canvas, pill: DRect, top: Double, right: Double, label: String, time: String, accent: Int, paused: Boolean, hits: Hits, alpha: Int) {
+        val cy = top + 25
+        val color = if (paused) 0x9EEBEBF5.toInt() else accent
+        hits.pause = DRect(pill.left + 18.5, cy - 24, pill.left + 66.5, cy + 24)
+        hits.cancel = DRect(hits.pause.right + 10, cy - 24, hits.pause.right + 58, cy + 24)
+        circle(canvas, hits.pause, tint(accent, 0.3f), alpha)
+        glyph(canvas, if (paused) "play" else "pause", hits.pause, accent, alpha)
+        circle(canvas, hits.cancel, 0x24FFFFFF, alpha)
+        glyph(canvas, "close", hits.cancel, Color.WHITE, alpha)
+        caption.color = color
+        caption.alpha = alpha
+        val cap = if (paused) "Paused" else label
+        canvas.drawText(cap, (right - 8 - caption.measureText(cap)).toFloat(), (top + 16).toFloat(), caption)
+        value.color = color
+        value.alpha = alpha
+        canvas.drawText(time, (right - value.measureText(time)).toFloat(), (top + 18 + 30).toFloat(), value)
+    }
+
+    private fun playerExpanded(canvas: Canvas, pill: DRect, titleText: String, artist: String, accent: Int, playing: Boolean, fraction: Float, elapsed: String, remaining: String, now: Double, hits: Hits, alpha: Int) {
+        val art = DRect(pill.left + 21.7, pill.top + 21.9, pill.left + 21.7 + 59.5, pill.top + 21.9 + 59.5)
+        artwork(canvas, "$titleText $artist", art, 14f, alpha)
+        val textLeft = pill.left + 98
+        val limit = pill.right - 70
+        player.color = Color.WHITE
+        player.alpha = alpha
+        canvas.drawText(ellipsize(titleText, player, limit - textLeft), textLeft.toFloat(), (pill.top + 47.3).toFloat(), player)
+        playerSub.color = 0xFF898989.toInt()
+        playerSub.alpha = alpha
+        canvas.drawText(ellipsize(artist, playerSub, limit - textLeft), textLeft.toFloat(), (pill.top + 64.4).toFloat(), playerSub)
+        val meter = DRect(pill.right - 26 - 24, pill.top + 26.3, pill.right - 26, pill.top + 46.3)
+        meter(canvas, meter, accent, 6, 2.4f, 1.9f, now, alpha, playing)
+        val barTop = pill.top + 102.7
+        small.color = 0xFF898989.toInt()
+        small.alpha = alpha
+        val elapsedLabel = elapsed.ifEmpty { "0:00" }
+        val remainingLabel = remaining.ifEmpty { "−0:00" }
+        canvas.drawText(elapsedLabel, (pill.left + 22.4).toFloat(), (barTop + 4).toFloat(), small)
+        val bar = RectF((pill.left + 55.4).toFloat(), (barTop - 3).toFloat(), (pill.right - 60).toFloat(), (barTop + 3).toFloat())
+        fill.color = 0x33FFFFFF
+        fill.alpha = alpha
+        canvas.drawRect(bar, fill)
+        bar.right = bar.left + bar.width() * fraction.coerceIn(0f, 1f)
+        fill.color = Color.WHITE
+        canvas.drawRect(bar, fill)
+        canvas.drawText(remainingLabel, (pill.right - 24 - small.measureText(remainingLabel)).toFloat(), (barTop + 4).toFloat(), small)
+        val buttonY = pill.top + 142
+        hits.toggle = DRect(pill.centerX - 18, buttonY - 18, pill.centerX + 18, buttonY + 18)
+        glyph(canvas, if (playing) "pause" else "play", hits.toggle, Color.WHITE, alpha)
+        glyph(canvas, "back", DRect(pill.centerX - 73.5 - 17, buttonY - 17, pill.centerX - 73.5 + 17, buttonY + 17), Color.WHITE, alpha)
+        glyph(canvas, "forward", DRect(pill.centerX + 73.5 - 17, buttonY - 17, pill.centerX + 73.5 + 17, buttonY + 17), Color.WHITE, alpha)
+    }
+
+    private fun callExpanded(canvas: Canvas, pill: DRect, caller: String, detail: String, valueText: String, hits: Hits, alpha: Int) {
+        val avatar = DRect(pill.left + 16.3, pill.top + 16.8, pill.left + 66.3, pill.top + 66.8)
+        avatar(canvas, caller, avatar, alpha)
+        val textLeft = pill.left + 76.5
+        val textLimit = pill.right - 130
+        label14.color = if (valueText == "Ring") 0x9EEBEBF5.toInt() else 0xFF76FB73.toInt()
+        label14.alpha = alpha
+        val line = if (valueText == "Ring") detail else valueText
+        canvas.drawText(ellipsize(line, label14, textLimit - textLeft), textLeft.toFloat(), (pill.top + 47.7).toFloat(), label14)
+        title.color = Color.WHITE
+        title.alpha = alpha
+        canvas.drawText(ellipsize(caller, title, textLimit - textLeft), textLeft.toFloat(), (pill.top + 66.2).toFloat(), title)
+        val cy = pill.top + 41.8
+        if (valueText == "Ring") {
+            hits.accept = DRect(pill.right - 16.1 - 50, cy - 25, pill.right - 16.1, cy + 25)
+            hits.decline = DRect(hits.accept.left - 10.5 - 50, cy - 25, hits.accept.left - 10.5, cy + 25)
+            circle(canvas, hits.decline, 0xFFFE4345.toInt(), alpha)
+            circle(canvas, hits.accept, 0xFF31D259.toInt(), alpha)
+            glyph(canvas, "hangup", hits.decline, Color.WHITE, alpha)
+            glyph(canvas, "phone", hits.accept, Color.WHITE, alpha)
+        } else {
+            hits.decline = DRect(pill.right - 16.1 - 50, cy - 25, pill.right - 16.1, cy + 25)
+            circle(canvas, hits.decline, 0xFFFE4345.toInt(), alpha)
+            glyph(canvas, "hangup", hits.decline, Color.WHITE, alpha)
+            meter(canvas, DRect(hits.decline.left - 48, cy - 9, hits.decline.left - 8, cy + 9), 0xFF76FB73.toInt(), 8, 2.25f, 1.13f, 0.0, alpha, true, twoTone = true)
+        }
+    }
+
+    private fun batteryExpanded(canvas: Canvas, pill: DRect, label: String, detail: String, percent: String, accent: Int, alpha: Int) {
+        val mid = pill.centerY
+        compact.color = Color.WHITE
+        compact.alpha = alpha
+        canvas.drawText(label, (pill.left + 18.5).toFloat(), (mid - 8).toFloat(), compact)
+        if (detail.isNotEmpty()) {
+            caption.color = 0x9EEBEBF5.toInt()
+            caption.alpha = alpha
+            canvas.drawText(detail, (pill.left + 18.5).toFloat(), (mid + 12).toFloat(), caption)
+        }
+        val charging = label == "Charging" || label == "Charged"
+        val color = if (charging) 0xFF53FA6D.toInt() else accent
+        compact.color = color
+        canvas.drawText(percent, (pill.right - 18.5 - 35.5 - 5.7 - compact.measureText(percent)).toFloat(), (mid + 5).toFloat(), compact)
+        batteryIcon(canvas, pill.right - 18.5 - 35.5, mid - 8.3, 35.5, percent, if (charging) 0xFF63FF39.toInt() else accent, charging, alpha)
+    }
+
+    private fun etaExpanded(canvas: Canvas, pill: DRect, name: String, plate: String, minutes: String, accent: Int, hole: DRect, alpha: Int) {
+        val glyphBox = DRect(pill.left + 21.5, pill.top + 22, pill.left + 65, pill.top + 64)
+        glyph(canvas, if (accent == 0xFFFFD60A.toInt()) "box" else "car", glyphBox, accent, alpha)
+        val right = pill.right - 25.5
+        titleRegular.color = Color.WHITE
+        titleRegular.alpha = alpha
+        val nameW = titleRegular.measureText(name)
+        canvas.drawText(name, (right - nameW).toFloat(), (pill.top + 40).toFloat(), titleRegular)
+        val vehicle = if (plate.contains("·")) plate.substringBefore("·").trim() else plate
+        val plateOnly = if (plate.contains("·")) plate.substringAfter("·").trim() else ""
+        if (plateOnly.isNotEmpty()) {
+            subtitle.color = 0x9EEBEBF5.toInt()
+            subtitle.alpha = alpha
+            canvas.drawText(plateOnly, (right - subtitle.measureText(plateOnly)).toFloat(), (pill.top + 60).toFloat(), subtitle)
+        }
+        val rowY = pill.top + 86
+        titleRegular.color = Color.WHITE
+        canvas.drawText(vehicle, (pill.left + 21.5).toFloat(), rowY.toFloat(), titleRegular)
+        val arrival = "Arriving in $minutes"
+        canvas.drawText(arrival, (right - titleRegular.measureText(arrival)).toFloat(), rowY.toFloat(), titleRegular)
+        val cap = DRect(pill.left + 20.8, pill.bottom - 20.8 - 44, pill.right - 20.8, pill.bottom - 20.8)
+        if (cap.top > hole.bottom) {
+            fill.color = tint(accent, 0.27f)
+            fill.alpha = alpha
+            canvas.drawRoundRect(cap.toRect(), 22f, 22f, fill)
+            val words = "Message ${name.substringBefore(' ')}"
+            title.color = accent
+            title.alpha = alpha
+            canvas.drawText(words, (cap.centerX - title.measureText(words) / 2).toFloat(), (cap.centerY - (title.ascent() + title.descent()) / 2).toFloat(), title)
+        }
+    }
+
+    private fun recordingExpanded(canvas: Canvas, pill: DRect, name: String, time: String, accent: Int, live: Boolean, hits: Hits, now: Double, alpha: Int) {
+        val color = if (live) accent else 0x9EEBEBF5.toInt()
+        val wave = DRect(pill.left + 18.5, pill.centerY - 20, pill.left + 18.5 + 137, pill.centerY + 20)
+        if (name == "Voice memo") meter(canvas, wave, color, 15, 2.9f, 2.4f, now, alpha, live, envelope = true)
+        else {
+            glyph(canvas, if (name == "Camera") "camera" else "screen", DRect(wave.left, wave.centerY - 11, wave.left + 22, wave.centerY + 11), accent, alpha)
+            compact.color = Color.WHITE
+            compact.alpha = alpha
+            canvas.drawText(name, (wave.left + 29).toFloat(), (wave.centerY - (compact.ascent() + compact.descent()) / 2).toFloat(), compact)
+        }
+        time22.color = color
+        time22.alpha = alpha
+        val shown = recorder(time)
+        val timeLeft = pill.right - 17.5 - 49 - 10 - time22.measureText(shown)
+        canvas.drawText(shown, timeLeft.toFloat(), (pill.centerY - (time22.ascent() + time22.descent()) / 2).toFloat(), time22)
+        hits.stop = DRect(pill.right - 17.5 - 49, pill.centerY - 24.5, pill.right - 17.5, pill.centerY + 24.5)
+        stroke.color = Color.WHITE
+        stroke.strokeWidth = 3f
+        stroke.alpha = alpha
+        canvas.drawCircle(hits.stop.centerX.toFloat(), hits.stop.centerY.toFloat(), 23f, stroke)
+        fill.color = accent
+        fill.alpha = alpha
+        canvas.drawRoundRect(RectF((hits.stop.centerX - 12.5).toFloat(), (hits.stop.centerY - 12.5).toFloat(), (hits.stop.centerX + 12.5).toFloat(), (hits.stop.centerY + 12.5).toFloat()), 6.5f, 6.5f, fill)
+    }
+
+    private fun mediaExpanded(canvas: Canvas, pill: DRect, id: String, glyph: String, titleText: String, detail: String, valueText: String, accent: Int, progress: Float, alpha: Int) {
+        val picture = DRect(pill.left + 16.3, pill.top + 16.8, pill.left + 66.3, pill.top + 66.8)
+        if (id == "upload") thumb(canvas, DRect(picture.centerX - 22, picture.centerY - 22, picture.centerX + 22, picture.centerY + 22), accent, alpha)
+        else glyph(canvas, "phone", picture, accent, alpha)
+        val textLeft = pill.left + 76.5
+        val limit = pill.right - 80
+        label14.color = 0x9EEBEBF5.toInt()
+        label14.alpha = alpha
+        val grey = when {
+            id == "upload" -> detail
+            glyph == "receive" -> "Receiving $detail"
+            else -> "Sending $detail"
+        }
+        canvas.drawText(ellipsize(grey, label14, limit - textLeft), textLeft.toFloat(), (pill.top + 47.7).toFloat(), label14)
+        title.color = Color.WHITE
+        title.alpha = alpha
+        val white = when {
+            id == "upload" && progress >= 1f -> "Uploaded"
+            id == "upload" -> "Uploading"
+            else -> "To $titleText"
+        }
+        canvas.drawText(ellipsize(white, title, limit - textLeft), textLeft.toFloat(), (pill.top + 66.2).toFloat(), title)
+        val ringBox = DRect(pill.right - 17.1 - 48, pill.top + 17.8, pill.right - 17.1, pill.top + 65.8)
+        ring(canvas, ringBox, progress, accent, 0x29FFFFFF, 4f, alpha, if (id == "upload") valueText.removeSuffix("%") else null)
+    }
+
+    private fun personExpanded(canvas: Canvas, pill: DRect, name: String, body: String, hole: DRect, alpha: Int) {
+        val avatar = DRect(pill.left + 16.3, pill.top + 16.8, pill.left + 66.3, pill.top + 66.8)
+        avatar(canvas, name, avatar, alpha)
+        val textLeft = pill.left + 76.5
+        val limit = hole.left - 8
+        title.color = Color.WHITE
+        title.alpha = alpha
+        canvas.drawText(ellipsize(name, title, limit - textLeft), textLeft.toFloat(), (pill.top + 48).toFloat(), title)
+        subtitle.color = 0x9EEBEBF5.toInt()
+        subtitle.alpha = alpha
+        canvas.drawText(ellipsize(body, subtitle, pill.right - 18.5 - textLeft), textLeft.toFloat(), (pill.top + 70).toFloat(), subtitle)
+    }
+
+    private fun eventExpanded(canvas: Canvas, pill: DRect, name: String, detail: String, valueText: String, accent: Int, hole: DRect, alpha: Int) {
+        val tile = DRect(pill.left + 18.5, pill.top + 18.18, pill.left + 70.5, pill.top + 70.18)
+        fill.color = tint(accent, 0.2f)
+        fill.alpha = alpha
+        canvas.drawRoundRect(tile.toRect(), 12f, 12f, fill)
+        glyph(canvas, if (name.startsWith("Order")) "box" else "event", tile, accent, alpha)
+        val textLeft = tile.right + 12
+        val limit = min(hole.left - 8, pill.right - 90)
+        title.color = Color.WHITE
+        title.alpha = alpha
+        if (limit > textLeft) canvas.drawText(ellipsize(name, title, limit - textLeft), textLeft.toFloat(), (tile.top + 22).toFloat(), title)
+        subtitle.color = 0x9EEBEBF5.toInt()
+        subtitle.alpha = alpha
+        if (limit > textLeft) canvas.drawText(ellipsize(detail, subtitle, limit - textLeft), textLeft.toFloat(), (tile.top + 44).toFloat(), subtitle)
+        value.color = accent
+        value.alpha = alpha
+        value.textSize = 22f
+        canvas.drawText(valueText, (pill.right - 17.81 - value.measureText(valueText)).toFloat(), (tile.top + 28).toFloat(), value)
+        value.textSize = 34f
+    }
+
+    private fun bubbleGlyph(id: String, accent: Int) = when (id) {
+        "call" -> "phone"
+        "eta" -> if (accent == 0xFFFFD60A.toInt()) "box" else "car"
+        "message" -> "message"
+        "calendar" -> "event"
+        "order-a", "order-b", "upload" -> "box"
+        else -> "screen"
+    }
+
+    private fun textIn(canvas: Canvas, text: String, paint: Paint, color: Int, rect: DRect?, end: Boolean, alpha: Int) {
+        if (rect == null || text.isEmpty() || rect.width < 2) return
+        paint.color = color
+        paint.alpha = alpha
+        val shown = ellipsize(text, paint, rect.width)
+        val x = if (end) rect.right - paint.measureText(shown) else rect.left
+        val y = rect.centerY - (paint.ascent() + paint.descent()) / 2.0
+        canvas.drawText(shown, x.toFloat(), y.toFloat(), paint)
+    }
+
+    private fun ring(canvas: Canvas, rect: DRect, progress: Float, color: Int, track: Int, thickness: Float, alpha: Int, figure: String? = null) {
+        val size = min(rect.width, rect.height).toFloat()
+        val cx = rect.centerX.toFloat()
+        val cy = rect.centerY.toFloat()
+        val r = size / 2f - thickness / 2f
+        stroke.strokeWidth = thickness
+        stroke.color = track
+        stroke.alpha = alpha
+        canvas.drawCircle(cx, cy, r, stroke)
+        if (progress > 0f) {
+            stroke.color = color
+            val oval = RectF(cx - r, cy - r, cx + r, cy + r)
+            canvas.drawArc(oval, -90f, 360f * progress.coerceIn(0f, 1f), false, stroke)
+        }
+        if (figure == "Done") {
+            glyph(canvas, "check", rect, color, alpha)
+        } else if (!figure.isNullOrEmpty()) {
+            val paint = if (size > 30) title else small
+            paint.color = Color.WHITE
+            paint.alpha = alpha
+            canvas.drawText(figure, cx - paint.measureText(figure) / 2f, cy - (paint.ascent() + paint.descent()) / 2f, paint)
+        }
+    }
+
+    private fun meter(canvas: Canvas, rect: DRect, color: Int, bars: Int, bar: Float, gap: Float, now: Double, alpha: Int, playing: Boolean, twoTone: Boolean = false, envelope: Boolean = false) {
+        val total = bars * bar + (bars - 1) * gap
+        var x = (rect.right - total).toFloat()
+        if (rect.width > total + 4) x = rect.left.toFloat()
+        val peaks = floatArrayOf(0.35f, 0.7f, 1f, 0.55f, 0.8f, 0.4f, 0.9f, 0.6f, 0.45f, 0.75f, 1f, 0.5f, 0.3f, 0.65f)
+        for (i in 0 until bars) {
+            val peak = peaks[i % peaks.size] * if (envelope) 1f else 0.92f
+            val swing = if (playing) 0.55f + 0.45f * ((sin(now * 6 + i) + 1) / 2).toFloat() else 0.35f
+            val h = (rect.height * peak * swing).toFloat().coerceAtLeast(2f)
+            fill.color = if (twoTone && i >= bars / 2) 0xFFFF9F0A.toInt() else color
+            fill.alpha = alpha
+            val top = (rect.centerY - h / 2).toFloat()
+            canvas.drawRoundRect(RectF(x, top, x + bar, top + h), bar / 2, bar / 2, fill)
+            x += bar + gap
+        }
+    }
+
+    private fun batteryRow(canvas: Canvas, rect: DRect, percent: String, accent: Int, charging: Boolean, alpha: Int) {
+        val color = if (charging) 0xFF53FA6D.toInt() else accent
+        compact.color = color
+        compact.alpha = alpha
+        val textW = compact.measureText(percent)
+        canvas.drawText(percent, (rect.right - 2 - 28 - 4 - textW).toFloat(), (rect.centerY - (compact.ascent() + compact.descent()) / 2).toFloat(), compact)
+        batteryIcon(canvas, rect.right - 2 - 28, rect.centerY - 6.6, 28.0, percent, color, charging, alpha)
+    }
+
+    private fun batteryIcon(canvas: Canvas, x: Double, y: Double, width: Double, percent: String, color: Int, charging: Boolean, alpha: Int) {
+        val bodyW = width * 33 / 36.1
+        val h = width * 17 / 36.1
+        val level = percent.removeSuffix("%").toFloatOrNull()?.div(100f) ?: 0.5f
+        fill.color = if (charging) 0xFF2E7124.toInt() else tint(color, 0.42f)
+        fill.alpha = alpha
+        canvas.drawRoundRect(RectF(x.toFloat(), y.toFloat(), (x + bodyW).toFloat(), (y + h).toFloat()), 4f, 4f, fill)
+        fill.color = color
+        canvas.drawRoundRect(RectF(x.toFloat(), y.toFloat(), (x + bodyW * level.coerceIn(0.06f, 1f)).toFloat(), (y + h).toFloat()), 4f, 4f, fill)
+        val nubW = width * 1.9 / 36.1
+        val nubH = h * 0.34
+        canvas.drawRoundRect(RectF((x + bodyW + 1).toFloat(), (y + (h - nubH) / 2).toFloat(), (x + bodyW + 1 + nubW).toFloat(), (y + (h + nubH) / 2).toFloat()), 1f, 1f, fill)
+    }
+
+    private fun artwork(canvas: Canvas, seed: String, rect: DRect, radius: Float, alpha: Int) {
+        val palette = palettes[seed.fold(0) { acc, c -> acc * 31 + c.code } and 7]
+        fill.color = palette
+        fill.alpha = alpha
+        canvas.drawRoundRect(rect.toRect(), radius, radius, fill)
+        fill.color = Color.WHITE
+        fill.alpha = (alpha * 0.35f).toInt()
+        canvas.drawCircle(rect.centerX.toFloat(), (rect.centerY - rect.height * 0.1).toFloat(), (rect.height * 0.28).toFloat(), fill)
+    }
+
+    private fun thumb(canvas: Canvas, rect: DRect, accent: Int, alpha: Int) {
+        fill.color = tint(accent, 0.22f)
+        fill.alpha = alpha
+        val radius = if (rect.width > 30) 16f else 5.5f
+        canvas.drawRoundRect(rect.toRect(), radius, radius, fill)
+        glyph(canvas, "upload", rect, accent, alpha)
+    }
+
+    private fun avatar(canvas: Canvas, name: String, rect: DRect?, alpha: Int) {
+        if (rect == null) return
+        fill.color = 0xFF3A3A44.toInt()
+        fill.alpha = alpha
+        canvas.drawOval(rect.toRect(), fill)
+        val letter = name.firstOrNull()?.uppercase() ?: ""
+        compact.color = Color.WHITE
+        compact.alpha = alpha
+        canvas.drawText(letter, (rect.centerX - compact.measureText(letter) / 2).toFloat(), (rect.centerY - (compact.ascent() + compact.descent()) / 2).toFloat(), compact)
+    }
+
+    private fun dot(canvas: Canvas, rect: DRect, color: Int, live: Boolean, alpha: Int) {
+        fill.color = if (live) color else 0x9EEBEBF5.toInt()
+        fill.alpha = alpha
+        val r = (min(rect.width, rect.height) * 0.25).toFloat()
+        canvas.drawCircle(rect.centerX.toFloat(), rect.centerY.toFloat(), r, fill)
+    }
+
+    private fun circle(canvas: Canvas, rect: DRect, color: Int, alpha: Int) {
+        fill.color = color
+        fill.alpha = alpha
+        canvas.drawOval(rect.toRect(), fill)
+    }
+
+    private fun glyph(canvas: Canvas, name: String, rect: DRect?, color: Int, alpha: Int) {
+        if (rect == null) return
+        val cx = rect.centerX.toFloat()
+        val cy = rect.centerY.toFloat()
+        val s = min(rect.width, rect.height).toFloat() * 0.34f
+        stroke.color = color
+        stroke.alpha = alpha
+        stroke.strokeWidth = (s * 0.16f).coerceAtLeast(1.4f)
+        fill.color = color
+        fill.alpha = alpha
+        when (name) {
+            "timer" -> {
+                canvas.drawCircle(cx, cy, s, stroke)
+                canvas.drawLine(cx, cy, cx, cy - s * 0.65f, stroke)
+                canvas.drawLine(cx, cy, cx + s * 0.45f, cy, stroke)
+            }
+            "phone" -> {
+                canvas.drawRoundRect(RectF(cx - s * 0.55f, cy - s * 0.9f, cx + s * 0.15f, cy + s * 0.2f), s * 0.3f, s * 0.3f, stroke)
+                canvas.drawLine(cx - s * 0.1f, cy + s * 0.15f, cx + s * 0.7f, cy + s * 0.7f, stroke)
+            }
+            "hangup" -> canvas.drawLine(cx - s, cy, cx + s, cy, stroke.apply { strokeWidth = s * 0.28f })
+            "pause" -> {
+                canvas.drawRoundRect(RectF(cx - s * 0.55f, cy - s, cx - s * 0.15f, cy + s), 2f, 2f, fill)
+                canvas.drawRoundRect(RectF(cx + s * 0.15f, cy - s, cx + s * 0.55f, cy + s), 2f, 2f, fill)
+            }
+            "play" -> {
+                val path = android.graphics.Path()
+                path.moveTo(cx - s * 0.4f, cy - s)
+                path.lineTo(cx + s * 0.7f, cy)
+                path.lineTo(cx - s * 0.4f, cy + s)
+                path.close()
+                canvas.drawPath(path, fill)
+            }
+            "check" -> {
+                canvas.drawLine(cx - s * 0.55f, cy, cx - s * 0.15f, cy + s * 0.45f, stroke)
+                canvas.drawLine(cx - s * 0.15f, cy + s * 0.45f, cx + s * 0.6f, cy - s * 0.5f, stroke)
+            }
+            "close" -> {
+                canvas.drawLine(cx - s * 0.6f, cy - s * 0.6f, cx + s * 0.6f, cy + s * 0.6f, stroke)
+                canvas.drawLine(cx + s * 0.6f, cy - s * 0.6f, cx - s * 0.6f, cy + s * 0.6f, stroke)
+            }
+            "car" -> {
+                canvas.drawRoundRect(RectF(cx - s, cy - s * 0.2f, cx + s, cy + s * 0.45f), 4f, 4f, fill)
+                canvas.drawCircle(cx - s * 0.5f, cy + s * 0.55f, s * 0.22f, fill)
+                canvas.drawCircle(cx + s * 0.5f, cy + s * 0.55f, s * 0.22f, fill)
+            }
+            "box", "upload" -> canvas.drawRoundRect(RectF(cx - s * 0.7f, cy - s * 0.55f, cx + s * 0.7f, cy + s * 0.7f), 3f, 3f, stroke)
+            "message" -> canvas.drawRoundRect(RectF(cx - s, cy - s * 0.7f, cx + s, cy + s * 0.45f), s * 0.4f, s * 0.4f, stroke)
+            "event" -> canvas.drawRoundRect(RectF(cx - s * 0.7f, cy - s * 0.8f, cx + s * 0.7f, cy + s * 0.8f), 3f, 3f, stroke)
+            "back", "forward" -> {
+                val dir = if (name == "back") -1f else 1f
+                canvas.drawLine(cx - dir * s * 0.4f, cy - s * 0.45f, cx + dir * s * 0.2f, cy, stroke)
+                canvas.drawLine(cx + dir * s * 0.2f, cy, cx - dir * s * 0.4f, cy + s * 0.45f, stroke)
+            }
+            "screen", "camera" -> canvas.drawCircle(cx, cy, s * 0.7f, stroke)
+            else -> canvas.drawCircle(cx, cy, s * 0.7f, stroke)
+        }
+    }
+
+    private fun recorder(time: String): String = if (time.length == 4 && time[1] == ':') "0$time" else time
+
+    private fun ellipsize(text: String, paint: Paint, max: Double): String {
+        if (max <= 8) return ""
+        if (paint.measureText(text) <= max) return text
+        var end = text.length
+        while (end > 0 && paint.measureText(text.substring(0, end) + "…") > max) end--
+        return if (end == 0) "…" else text.substring(0, end) + "…"
+    }
+
+    private fun tint(color: Int, alpha: Float): Int {
+        val a = (alpha * 255).toInt().coerceIn(0, 255)
+        return (color and 0x00FFFFFF) or (a shl 24)
+    }
+
+    private fun text(size: Float, weight: Int, tracking: Float) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = size
+        typeface = Typeface.create(Typeface.create("sans-serif", Typeface.NORMAL), weight, false)
+        letterSpacing = if (size == 0f) 0f else tracking / size
+        fontFeatureSettings = "tnum"
+        color = Color.WHITE
+    }
+
+    fun coverAccent(seed: String): Int = accents[seed.fold(0) { acc, c -> acc * 31 + c.code } and 7]
+
+    private val accents = intArrayOf(
+        0xFF5FE0C4.toInt(), 0xFFFF7A5C.toInt(), 0xFFD68CFF.toInt(), 0xFFA9E05A.toInt(),
+        0xFF5CB8FF.toInt(), 0xFFFFB547.toInt(), 0xFFFF8FB6.toInt(), 0xFFFF7D52.toInt(),
+    )
+
+    private val palettes = intArrayOf(
+        0xFF11616B.toInt(), 0xFF7C1A3B.toInt(), 0xFF43358A.toInt(), 0xFF2B6236.toInt(),
+        0xFF1B4A85.toInt(), 0xFFA44C17.toInt(), 0xFF97445F.toInt(), 0xFF363B44.toInt(),
+    )
+
+    private fun DRect.toRect() = RectF(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
+}
