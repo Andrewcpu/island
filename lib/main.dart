@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'controller.dart';
 import 'theme.dart';
-import 'ui/home.dart';
+import 'ui/setup.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,15 +14,11 @@ Future<void> main() async {
     systemNavigationBarColor: IslandColors.page,
     systemNavigationBarIconBrightness: Brightness.light,
   ));
-  final controller = IslandController();
-  await controller.init();
-  runApp(IslandApp(controller: controller));
+  runApp(const SetupApp());
 }
 
-class IslandApp extends StatelessWidget {
-  final IslandController controller;
-
-  const IslandApp({super.key, required this.controller});
+class SetupApp extends StatelessWidget {
+  const SetupApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +31,7 @@ class IslandApp extends StatelessWidget {
         colorScheme: const ColorScheme.dark(primary: IslandColors.lagoon, surface: IslandColors.page),
         fontFamily: 'Roboto',
       ),
-      home: IslandHome(controller: controller),
+      home: const SetupPage(),
     );
   }
 }

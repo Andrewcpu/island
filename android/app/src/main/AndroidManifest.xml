@@ -35,12 +35,12 @@
         </activity>
 
         <service
-            android:name=".LiveActivityService"
+            android:name=".IslandOverlayService"
             android:exported="false"
             android:foregroundServiceType="specialUse|microphone">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Shows the current Dynamic Island activity while a timer, call, recording, or transfer is in progress." />
+                android:value="Draws the Dynamic Island over other apps around the camera cutout." />
         </service>
 
         <service

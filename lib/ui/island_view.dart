@@ -100,10 +100,10 @@ class _IslandViewState extends State<IslandView> with SingleTickerProviderStateM
             ),
             size: Size.infinite,
           ),
+          ..._content(pill, bubble, hole, reveal, engine.reduced ? 1 : scale),
           if (engine.kind != PresentationKind.expanded && pill.width > 1)
             _hit(pill, 'pill', engine.primary?.label ?? 'Dynamic Island'),
           if (engine.kind != PresentationKind.expanded && bubble != null) _hit(bubble, 'bubble', engine.secondary?.label ?? 'Second activity'),
-          ..._content(pill, bubble, hole, reveal, engine.reduced ? 1 : scale),
         ],
       ),
     );
@@ -124,10 +124,11 @@ class _IslandViewState extends State<IslandView> with SingleTickerProviderStateM
         label: label,
         hint: 'Long press to expand',
         child: Listener(
-          behavior: HitTestBehavior.translucent,
+          behavior: HitTestBehavior.opaque,
           onPointerDown: (_) => engine.pointerDown(target),
           onPointerUp: (_) => engine.pointerUp(),
           onPointerCancel: (_) => engine.pointerUp(),
+          child: const SizedBox.expand(),
         ),
       ),
     );

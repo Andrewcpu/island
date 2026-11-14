@@ -831,7 +831,6 @@ class IslandController extends ChangeNotifier with WidgetsBindingObserver {
     final shown = engine.visible;
     if (shown.isEmpty) {
       platform.clearLive();
-      platform.hideOverlay();
       return;
     }
     final primary = shown.first;
@@ -841,13 +840,7 @@ class IslandController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      platform.hideOverlay();
-      refreshDevice();
-    } else if (state == AppLifecycleState.paused && wantOverlay && overlayAllowed) {
-      final label = engine.primary?.label;
-      if (label != null) platform.showOverlay(label);
-    }
+    if (state == AppLifecycleState.resumed) refreshDevice();
   }
 
   @override

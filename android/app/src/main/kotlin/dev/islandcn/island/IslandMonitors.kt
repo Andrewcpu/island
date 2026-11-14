@@ -27,9 +27,21 @@ object IslandMonitors {
     @Volatile private var micRunning = false
     private var telephonyCallback: TelephonyCallback? = null
 
-    fun cutouts(activity: MainActivity): List<Map<String, Double>> {
-        val density = activity.resources.displayMetrics.density.toDouble()
-        val cutout = activity.window.decorView.rootWindowInsets?.displayCutout ?: return emptyList()
+    fun display(context: Context): Map<String, Any> {
+        val density = context.resources.displayMetrics.density.toDouble().coerceAtLeast(1.0)
+        val metrics = context.getSystemService(android.view.WindowManager::class.java).currentWindowMetrics
+        val bounds = metrics.bounds
+        return mapOf(
+            "width" to bounds.width() / density,
+            "height" to bounds.height() / density,
+            "cutouts" to cutouts(context),
+        )
+    }
+
+    fun cutouts(context: Context): List<Map<String, Double>> {
+        val density = context.resources.displayMetrics.density.toDouble().coerceAtLeast(1.0)
+        val cutout = context.getSystemService(android.view.WindowManager::class.java)
+            .currentWindowMetrics.windowInsets.displayCutout ?: return emptyList()
         return cutout.boundingRects.map {
             mapOf(
                 "left" to it.left / density,
@@ -173,8 +185,7 @@ object IslandMonitors {
 
     fun startMic(context: Context): Boolean {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return false
-        LiveActivityService.useMic = true
-        LiveActivityService.start(context, "Recording", "Microphone")
+        IslandOverlayService.setMic(context, true)
         if (micRunning) return true
         val rate = 16000
         val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -203,7 +214,7 @@ object IslandMonitors {
     }
 
     fun stopMic() {
-        LiveActivityService.useMic = false
+        IslandOverlayService.setMic(context = null, on = false)
         micRunning = false
         recorder?.run {
             try {

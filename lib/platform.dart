@@ -26,9 +26,15 @@ class IslandPlatform {
     }
   }
 
-  Future<List<Rect>> cutouts() async {
-    final raw = await _call('cutout');
-    final list = raw['cutouts'];
+  Future<({Size size, List<Rect> cutouts})> display() async {
+    final raw = await _call('display');
+    return (
+      size: Size((raw['width'] as num?)?.toDouble() ?? 0, (raw['height'] as num?)?.toDouble() ?? 0),
+      cutouts: _rects(raw['cutouts']),
+    );
+  }
+
+  List<Rect> _rects(Object? list) {
     if (list is! List) return const [];
     return [
       for (final item in list)
@@ -41,6 +47,21 @@ class IslandPlatform {
           ),
     ];
   }
+
+  Future<List<Rect>> cutouts() async => _rects((await _call('cutout'))['cutouts']);
+
+  Future<void> setFrame(Rect rect) => _call('setFrame', {
+        'left': rect.left,
+        'top': rect.top,
+        'width': rect.width,
+        'height': rect.height,
+      });
+
+  Future<void> command(String name, [Map<String, dynamic> args = const {}]) => _call('command', {'name': name, 'args': args});
+
+  Future<void> ensureOverlay() => _call('ensureOverlay');
+
+  Future<void> overlayReady() => _call('ready');
 
   Future<Map<String, dynamic>> battery() => _call('battery');
 
@@ -79,8 +100,4 @@ class IslandPlatform {
   Future<void> setLive({required String title, required String body}) => _call('setLive', {'title': title, 'body': body});
 
   Future<void> clearLive() => _call('clearLive');
-
-  Future<void> showOverlay(String label) => _call('showOverlay', {'label': label});
-
-  Future<void> hideOverlay() => _call('hideOverlay');
 }

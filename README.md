@@ -2,9 +2,9 @@
 
 Android Dynamic Island. The island UI and motion are a Flutter port of the open-source [islandcn](https://github.com/opencoredev/islandcn) component (MIT). This is not a port of the islandcn.dev marketing site.
 
-The island sits in the status-bar band, edge to edge, and routes around a centered camera punch-hole (`DisplayCutout` / `WindowInsets`). On a device with no top cutout it uses a centered 28dp hole so the layout still matches a Pixel-class front camera. Compact and split glyphs stay outside that hole. The sensor pill covers it.
+The island is a real screen overlay (`TYPE_APPLICATION_OVERLAY`). It sits in the status-bar band, around the camera punch-hole (`DisplayCutout` / `WindowInsets`), and only the island itself takes touches. Taps outside it go to whatever app is underneath. On a device with no top cutout it uses a centered 28dp hole so the layout still matches a Pixel-class front camera.
 
-A normal app cannot replace the system status-bar island. This app draws the island in its own edge-to-edge window, mirrors the current activity in an ongoing notification, and can show a compact overlay pill when the overlay permission is granted.
+The activity you open from the launcher is the permission and activity screen. The island stays up after you leave that screen. Android will not let an app draw the system status-bar island, so this overlay is the island.
 
 ## Install
 
@@ -32,7 +32,7 @@ Settings on the page:
 
 - Reduced motion: follow the system, always, or never. Reduced motion is a 0.2s ease with no overshoot.
 - Keyline: thin rim once the pill grows on a dark page.
-- Show over other apps: compact overlay while this app is backgrounded. Android will not grant this from a dialog; use the system setting the app opens.
+- Show over other apps is required. The first launch requests runtime permissions, then opens the overlay setting, then notification access. Each can be turned on again from the setup screen.
 
 ## Modes
 
@@ -70,7 +70,7 @@ Denial leaves the rest of the app usable. Each live row explains the fallback.
 | `MODIFY_AUDIO_SETTINGS` | Speaker route for the player. |
 | `POST_NOTIFICATIONS` | Ongoing activity notification. |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `FOREGROUND_SERVICE_MICROPHONE` | Keep the activity posted, and the mic type while recording. |
-| `SYSTEM_ALERT_WINDOW` | Optional compact pill over other apps. |
+| `SYSTEM_ALERT_WINDOW` | The island overlay. Android opens a settings screen for this. It cannot be granted from a dialog. |
 
 ## Motion
 
@@ -78,7 +78,7 @@ Springs use the islandcn response and damping values (SwiftUI closed form): appe
 
 ## What a phone test still needs
 
-This environment has no Pixel, so the cutout layout is tested against a 448×998 dp screen with a centered punch-hole, not on hardware. On a device, confirm the real `DisplayCutout` bounds, that accept/end reach the dialer, and that notification access is toggled in system settings. System status icons can still draw on top of a very wide pill; Android does not let a third-party app own that band.
+This environment has no Pixel, so the cutout layout is tested against a 448×998 dp screen with a centered punch-hole, not on hardware. On a device, allow display over other apps, then confirm the island sits on the camera and that taps outside it reach the app underneath. System status icons can still draw beside the pill. Android does not let a third-party app replace the status-bar island itself.
 
 ## License
 
