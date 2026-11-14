@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.ContactsContract
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
@@ -26,6 +28,11 @@ object IslandMonitors {
     private var recorder: AudioRecord? = null
     @Volatile private var micRunning = false
     private var telephonyCallback: TelephonyCallback? = null
+    private var phoneContext: Context? = null
+    private var callState = "idle"
+    private var callerLabel = ""
+    private var pendingLabel = ""
+    private val genericCaller = setOf("incoming call", "incoming", "phone", "call", "mobile")
 
     fun display(context: Context): Map<String, Any> {
         val density = context.resources.displayMetrics.density.toDouble().coerceAtLeast(1.0)
@@ -127,9 +134,16 @@ object IslandMonitors {
     }
 
     fun watchPhone(context: Context) {
-        if (phoneWatching) return
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return
-        val manager = context.getSystemService(TelephonyManager::class.java) ?: return
+        val app = context.applicationContext
+        phoneContext = app
+        if (phoneWatching) {
+            val manager = app.getSystemService(TelephonyManager::class.java) ?: return
+            @Suppress("DEPRECATION")
+            emitPhone(manager.callState, null)
+            return
+        }
+        val manager = app.getSystemService(TelephonyManager::class.java) ?: return
         phoneWatching = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
@@ -138,7 +152,7 @@ object IslandMonitors {
                 }
             }
             telephonyCallback = callback
-            manager.registerTelephonyCallback(context.mainExecutor, callback)
+            manager.registerTelephonyCallback(app.mainExecutor, callback)
         } else {
             @Suppress("DEPRECATION")
             manager.listen(object : PhoneStateListener() {
@@ -148,6 +162,23 @@ object IslandMonitors {
                 }
             }, PhoneStateListener.LISTEN_CALL_STATE)
         }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
+                val extra = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
+                val state = when (extra) {
+                    TelephonyManager.EXTRA_STATE_RINGING -> TelephonyManager.CALL_STATE_RINGING
+                    TelephonyManager.EXTRA_STATE_OFFHOOK -> TelephonyManager.CALL_STATE_OFFHOOK
+                    else -> TelephonyManager.CALL_STATE_IDLE
+                }
+                emitPhone(state, intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER))
+            }
+        }
+        val filter = IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
+        if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+        else app.registerReceiver(receiver, filter)
+        @Suppress("DEPRECATION")
+        emitPhone(manager.callState, null)
     }
 
     private fun emitPhone(state: Int, number: String?) {
@@ -156,7 +187,66 @@ object IslandMonitors {
             TelephonyManager.CALL_STATE_OFFHOOK -> "offhook"
             else -> "idle"
         }
-        IslandBus.emit(mapOf("type" to "phone", "state" to name, "number" to (number ?: "")))
+        val host = phoneContext
+        if (name == "idle") {
+            callerLabel = ""
+            pendingLabel = ""
+        }
+        callState = name
+        if (!number.isNullOrBlank() && name != "idle") adoptCaller(number)
+        else if (name != "idle" && callerLabel.isEmpty() && pendingLabel.isNotEmpty()) callerLabel = pendingLabel
+        IslandBus.emit(mapOf("type" to "phone", "state" to name, "number" to callerLabel))
+        if (host != null) IslandOverlayService.onCall(host, name, if (name == "idle") "" else callerLabel)
+    }
+
+    fun noteCaller(context: Context, raw: String?, ongoing: Boolean) {
+        phoneContext = phoneContext ?: context.applicationContext
+        if (callState == "idle") {
+            if (ongoing) adoptPending(raw)
+            return
+        }
+        if (!adoptCaller(raw)) return
+        val host = phoneContext ?: return
+        IslandOverlayService.onCall(host, callState, callerLabel)
+    }
+
+    private fun adoptPending(raw: String?) {
+        val candidate = raw?.trim().orEmpty()
+        if (candidate.isEmpty() || genericCaller.contains(candidate.lowercase())) return
+        pendingLabel = if (looksLikeNumber(candidate)) contactName(candidate) ?: candidate else candidate
+    }
+
+    private fun adoptCaller(raw: String?): Boolean {
+        val candidate = raw?.trim().orEmpty()
+        if (candidate.isEmpty()) return false
+        val resolved = if (looksLikeNumber(candidate)) contactName(candidate) ?: candidate else candidate
+        if (resolved.equals(callerLabel, ignoreCase = true)) return false
+        val generic = genericCaller.contains(resolved.lowercase())
+        val currentGeneric = callerLabel.isEmpty() || genericCaller.contains(callerLabel.lowercase())
+        if (generic && !currentGeneric) return false
+        if (!currentGeneric && looksLikeNumber(resolved) && !looksLikeNumber(callerLabel)) return false
+        callerLabel = resolved
+        return true
+    }
+
+    private fun contactName(number: String): String? {
+        val context = phoneContext ?: return null
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) return null
+        val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
+        return try {
+            context.contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) return null
+                cursor.getString(0)?.trim()?.ifEmpty { null }
+            }
+        } catch (_: SecurityException) {
+            null
+        }
+    }
+
+    private fun looksLikeNumber(value: String): Boolean {
+        val digits = value.count { it.isDigit() }
+        if (digits < 3) return false
+        return value.all { it.isDigit() || it == '+' || it == '-' || it == '(' || it == ')' || it == ' ' || it == '.' }
     }
 
     fun acceptCall(context: Context): Boolean {

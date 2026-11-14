@@ -79,7 +79,7 @@ class _SetupPageState extends State<SetupPage> with WidgetsBindingObserver {
             _Row('Above the status bar', above, 'Enable', platform.openAccessibilitySettings),
             _Row('Display over apps', overlay, 'Allow', platform.openOverlaySettings),
             _Row('Notifications', _on('POST_NOTIFICATIONS'), 'Allow', () => platform.request(['android.permission.POST_NOTIFICATIONS'])),
-            _Row('Phone', _on('READ_PHONE_STATE') && _on('ANSWER_PHONE_CALLS'), 'Allow', () => platform.request(['android.permission.READ_PHONE_STATE', 'android.permission.ANSWER_PHONE_CALLS'])),
+            _Row('Phone', _on('READ_PHONE_STATE') && _on('ANSWER_PHONE_CALLS') && _on('READ_CALL_LOG') && _on('READ_CONTACTS'), 'Allow', () => platform.request(['android.permission.READ_PHONE_STATE', 'android.permission.ANSWER_PHONE_CALLS', 'android.permission.READ_CALL_LOG', 'android.permission.READ_CONTACTS'])),
             _Row('Messages', _on('notificationAccess'), 'Allow', platform.openNotificationAccess),
             _Row('SMS', _on('READ_SMS') && _on('RECEIVE_SMS'), 'Allow', () => platform.request(['android.permission.READ_SMS', 'android.permission.RECEIVE_SMS'])),
             _Row('Calendar', _on('READ_CALENDAR'), 'Allow', () => platform.request(['android.permission.READ_CALENDAR'])),
@@ -143,7 +143,7 @@ class _SetupPageState extends State<SetupPage> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Tap a sample again, or Clear, to return the island to idle. Tap the island for its action. Hold it to expand. A tap outside collapses it and still reaches the app underneath.',
+              'Tap a sample again, or Clear, to dismiss that preview. A live call, message, timer, or playing session stays, and replaces a preview of the same kind. Hold the island to expand. A tap outside collapses it and still reaches the app underneath.',
               style: TextStyle(color: IslandColors.tertiary, fontSize: 13, height: 1.35),
             ),
           ],

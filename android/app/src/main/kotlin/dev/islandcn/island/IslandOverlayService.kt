@@ -57,6 +57,9 @@ class IslandOverlayService : Service() {
             Log.e(TAG, "Island overlay failed to start", error)
         }
         flushQueue()
+        pill?.let { IslandOverlayService.applyLive(it) }
+        IslandMonitors.watchPhone(this)
+        IslandNotificationListener.instance?.resync()
         return START_STICKY
     }
 
@@ -227,6 +230,13 @@ class IslandOverlayService : Service() {
         private const val TAG = "IslandOverlay"
         private const val CHANNEL = "island.fgs"
         private val queue = mutableListOf<Pair<String, Map<String, Any?>>>()
+        private var latestMedia: IslandMedia.Track? = null
+        private var mediaKnown = false
+        private var latestCall: Pair<String, String>? = null
+        private var latestMessage: Pair<String, String>? = null
+        private var latestTimer: TimerSnap? = null
+
+        private data class TimerSnap(val remainingMs: Long, val paused: Boolean, val label: String)
 
         @Volatile var instance: IslandOverlayService? = null
         @Volatile var useMic: Boolean = false
@@ -265,8 +275,52 @@ class IslandOverlayService : Service() {
             else if (on && context != null) start(context)
         }
 
-        fun onMedia(track: IslandMedia.Track?) {
-            instance?.applyMedia(track)
+        fun onMedia(context: Context, track: IslandMedia.Track?) {
+            latestMedia = track
+            mediaKnown = true
+            deliver(context) { it.onMedia(track) }
+        }
+
+        fun onCall(context: Context, state: String, label: String) {
+            latestCall = state to label
+            deliver(context) { it.onLiveCall(state, label) }
+        }
+
+        fun onMessage(context: Context, sender: String, body: String) {
+            latestMessage = sender to body
+            deliver(context) { it.onLiveMessage(sender, body) }
+        }
+
+        fun onMessageCleared() {
+            latestMessage = null
+            instance?.pill?.onLiveMessageCleared()
+        }
+
+        fun onTimer(context: Context, remainingMs: Long, paused: Boolean, label: String) {
+            latestTimer = TimerSnap(remainingMs, paused, label)
+            deliver(context) { it.onLiveTimer(remainingMs, paused, label) }
+        }
+
+        fun onTimerCleared() {
+            latestTimer = null
+            instance?.pill?.onLiveTimerCleared()
+        }
+
+        private fun deliver(context: Context, apply: (IslandPillView) -> Unit) {
+            val service = instance
+            val view = service?.pill
+            if (view != null) {
+                apply(view)
+                return
+            }
+            if (service == null) start(context)
+        }
+
+        private fun applyLive(view: IslandPillView) {
+            if (mediaKnown) view.onMedia(latestMedia)
+            latestCall?.let { view.onLiveCall(it.first, it.second) }
+            latestMessage?.let { view.onLiveMessage(it.first, it.second) }
+            latestTimer?.let { view.onLiveTimer(it.remainingMs, it.paused, it.label) }
         }
 
         fun dispatch(context: Context, name: String, args: Map<String, Any?>) {

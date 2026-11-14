@@ -42,6 +42,12 @@ class IslandPillView(context: Context) : View(context) {
     private var mediaPosition = 0L
     private var mediaDuration = 0L
     private var mediaTrack: IslandMedia.Track? = null
+    private var liveMusic = false
+    private var liveCall = false
+    private var liveMessage = false
+    private var liveTimer = false
+    private var callerLabel = ""
+    private var timerSpan = 5 * 60 * 1000L
     private var timerEnds = 0L
     private var timerLeft = 0L
     private var timerPaused = false
@@ -101,23 +107,122 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     fun onMedia(track: IslandMedia.Track?) {
-        if (sample != "music" && sample != "split") return
         if (track == null) {
+            liveMusic = false
             mediaTrack = null
-            if (sample == "music") clearAll()
-            else if (faces.containsKey("now-playing")) {
-                faces.remove("now-playing")
+            if (sample == "music") sample = null
+            if (faces.remove("now-playing") != null) {
                 rig.end("now-playing")
                 kick()
             }
             return
         }
+        liveMusic = true
+        if (sample == "music") sample = null
         showTrack(track)
+    }
+
+    fun onLiveCall(state: String, label: String) {
+        when (state) {
+            "ringing" -> showLiveCall(ringing = true, label = label)
+            "offhook" -> showLiveCall(ringing = false, label = label)
+            else -> {
+                liveCall = false
+                callerLabel = ""
+                callFrom = 0L
+                if (sample != "call" && faces.remove("call") != null) {
+                    rig.end("call")
+                    kick()
+                }
+            }
+        }
+    }
+
+    fun onLiveMessage(sender: String, body: String) {
+        val title = sender.trim()
+        val text = body.trim()
+        if (title.isEmpty() && text.isEmpty()) return
+        liveMessage = true
+        if (sample == "message") sample = null
+        val existing = faces["message"]
+        if (existing != null && existing.title == title && existing.detail == text) return
+        present(face("message", "message", "", "", title, text, "", Color.WHITE, -1f, 48.0, 80), alert = existing == null)
+    }
+
+    fun onLiveMessageCleared() {
+        liveMessage = false
+        if (sample == "message") return
+        if (faces.remove("message") != null) {
+            rig.end("message")
+            kick()
+        }
+    }
+
+    fun onLiveTimer(remainingMs: Long, paused: Boolean, label: String) {
+        val left = remainingMs.coerceAtLeast(0L)
+        val caption = label.trim().ifBlank { "Timer" }
+        if (!liveTimer || left > timerLeft + 2000L) timerSpan = left.coerceAtLeast(1L)
+        liveTimer = true
+        if (sample == "timer") sample = null
+        timerPaused = paused
+        timerLeft = left
+        timerEnds = SystemClock.elapsedRealtime() + left
+        timerDoneAt = 0.0
+        val text = clock(left)
+        val existing = faces["timer"]
+        if (existing != null) {
+            existing.trail = text
+            existing.value = text
+            existing.title = caption
+            existing.detail = if (paused) "Paused" else caption
+            existing.progress = left.toFloat() / timerSpan.coerceAtLeast(1L)
+            kick()
+            return
+        }
+        present(face("timer", "timer", "", text, caption, if (paused) "Paused" else caption, text, 0xFFFF9F0A.toInt(), left.toFloat() / timerSpan.coerceAtLeast(1L), 50.0, 50))
+    }
+
+    fun onLiveTimerCleared() {
+        liveTimer = false
+        if (sample == "timer") return
+        timerDoneAt = 0.0
+        if (faces.remove("timer") != null) {
+            rig.end("timer")
+            kick()
+        }
+    }
+
+    private fun showLiveCall(ringing: Boolean, label: String) {
+        liveCall = true
+        if (sample == "call") sample = null
+        val incoming = label.trim()
+        if (incoming.isNotEmpty()) callerLabel = incoming
+        val title = callerLabel
+        val existing = faces["call"]
+        if (ringing) {
+            callFrom = 0L
+            if (existing != null && existing.value == "Ring" && existing.title == title) return
+            if (existing != null && existing.value == "Ring") {
+                existing.title = title
+                kick()
+                return
+            }
+            present(face("call", "phone", "", "Ring", title, "Audio call", "Ring", 0xFF31D259.toInt(), -1f, 48.0, 100), alert = true)
+            return
+        }
+        if (existing != null && existing.value != "Ring") {
+            if (incoming.isNotEmpty()) existing.title = title
+            kick()
+            return
+        }
+        if (callFrom == 0L) callFrom = SystemClock.elapsedRealtime()
+        val elapsed = clock(SystemClock.elapsedRealtime() - callFrom)
+        present(face("call", "phone", "", elapsed, title, "On the call", elapsed, 0xFF76FB73.toInt(), -1f, 48.0, 100))
     }
 
     fun command(name: String, args: Map<String, Any?>) {
         when (name) {
-            "clear" -> clearAll()
+            "clear" -> dismissPreview()
             "outside" -> {
                 rig.collapse()
                 kick()
@@ -135,11 +240,12 @@ class IslandPillView(context: Context) : View(context) {
             "startTimer" -> toggle("timer") { armTimer() }
             "playSample" -> {
                 if (sample == "music") {
-                    clearAll()
+                    dismissPreview()
                     return
                 }
+                if (liveMusic) return
                 val track = IslandMedia.current(context) ?: return
-                clearAll()
+                dismissPreview()
                 sample = "music"
                 showTrack(track)
             }
@@ -149,7 +255,7 @@ class IslandPillView(context: Context) : View(context) {
                 present(face("call", "phone", "", "Ring", caller, "Audio call", "Ring", 0xFF31D259.toInt(), -1f, 48.0, 100), alert = true)
             }
             "acceptCall" -> if (faces.containsKey("call")) accept()
-            "endCall" -> if (sample == "call") clearAll()
+            "endCall" -> if (sample == "call") dismissPreview() else if (liveCall) IslandMonitors.endCall(context)
             "startUpload" -> toggle("upload") {
                 uploadStarted = SystemClock.elapsedRealtime()
                 present(face("upload", "upload", "", "0%", "Uploading", "biscuit-in-the-sun.jpg", "0%", 0xFF0A84FF.toInt(), 0f, 48.0, 30))
@@ -177,7 +283,7 @@ class IslandPillView(context: Context) : View(context) {
                     present(face("recording", "mic", "", "0:00", title, "Recording", "0:00", 0xFFFF453A.toInt(), -1f, 48.0, 70))
                 }
             }
-            "stopRecording" -> if (sample?.startsWith("record") == true) clearAll()
+            "stopRecording" -> if (sample?.startsWith("record") == true) dismissPreview()
             "toggleRecording" -> if (faces.containsKey("recording")) toggleRecord()
             "startTransfer" -> {
                 val send = args["direction"]?.toString() != "receive"
@@ -205,10 +311,10 @@ class IslandPillView(context: Context) : View(context) {
             }
             "handoff" -> {
                 if (sample == "handoff") {
-                    clearAll()
+                    dismissPreview()
                     return
                 }
-                if (sample != "orders" && sample != "handoff") clearAll()
+                if (sample != "orders" && sample != "handoff") dismissPreview()
                 sample = "handoff"
                 faces.remove("order-a")
                 rig.end("order-a")
@@ -356,15 +462,24 @@ class IslandPillView(context: Context) : View(context) {
 
     private fun onTap(id: String) {
         when (pressedButton) {
-            "decline", "cancel", "stop" -> {
-                clearAll()
+            "decline" -> {
+                if (liveCall) IslandMonitors.endCall(context) else dismissPreview()
+                return
+            }
+            "cancel" -> {
+                if (!liveTimer) dismissPreview()
+                return
+            }
+            "stop" -> {
+                dismissPreview()
                 return
             }
             "accept" -> {
-                accept()
+                if (liveCall) IslandMonitors.acceptCall(context) else accept()
                 return
             }
             "pause" -> {
+                if (liveTimer) return
                 timerPaused = !timerPaused
                 if (timerPaused) timerLeft = (timerEnds - SystemClock.elapsedRealtime()).coerceAtLeast(0)
                 else timerEnds = SystemClock.elapsedRealtime() + timerLeft
@@ -380,6 +495,7 @@ class IslandPillView(context: Context) : View(context) {
         if (rig.expanded) return
         when (id) {
             "timer" -> {
+                if (liveTimer) return
                 timerPaused = !timerPaused
                 if (timerPaused) timerLeft = (timerEnds - SystemClock.elapsedRealtime()).coerceAtLeast(0)
                 else timerEnds = SystemClock.elapsedRealtime() + timerLeft
@@ -419,15 +535,21 @@ class IslandPillView(context: Context) : View(context) {
         if (timer != null) {
             val left = if (timerPaused) timerLeft else (timerEnds - nowMs).coerceAtLeast(0)
             if (left <= 0L && !timerPaused) {
-                faces.remove("timer")
-                rig.end("timer")
-                timerDoneAt = rig.now + 6.4
-                present(face("timer-done", "timer", "", "0:00", "Time's up", "Timer", "0:00", Color.WHITE, -1f, 48.0, 60), alert = true)
+                if (liveTimer) {
+                    timer.trail = "0:00"
+                    timer.value = "0:00"
+                    timer.progress = 0f
+                } else {
+                    faces.remove("timer")
+                    rig.end("timer")
+                    timerDoneAt = rig.now + 6.4
+                    present(face("timer-done", "timer", "", "0:00", "Time's up", "Timer", "0:00", Color.WHITE, -1f, 48.0, 60), alert = true)
+                }
             } else {
                 val label = clock(left)
                 timer.trail = label
                 timer.value = label
-                timer.progress = left.toFloat() / (5 * 60 * 1000f)
+                timer.progress = left.toFloat() / timerSpan.coerceAtLeast(1L)
             }
         }
         if (timerDoneAt > 0 && rig.now >= timerDoneAt) {
@@ -451,7 +573,7 @@ class IslandPillView(context: Context) : View(context) {
         }
         progress(faces["upload"], uploadStarted, 5000L)
         progress(faces["transfer"], transferStarted, 5000L)
-        if ((sample == "music" || sample == "split") && nowMs - mediaAt > 1000L) {
+        if ((liveMusic || sample == "music" || sample == "split") && nowMs - mediaAt > 1000L) {
             mediaAt = nowMs
             onMedia(IslandMedia.current(context))
         }
@@ -465,7 +587,7 @@ class IslandPillView(context: Context) : View(context) {
         face.trail = label
         face.value = label
         if (fraction >= 1f && SystemClock.elapsedRealtime() - started > duration + 1200) {
-            if (sample == "upload" || sample == "send" || sample == "receive") clearAll()
+            if (sample == "upload" || sample == "send" || sample == "receive") dismissPreview()
         }
     }
 
@@ -480,7 +602,8 @@ class IslandPillView(context: Context) : View(context) {
 
     private fun armTimer() {
         timerPaused = false
-        timerLeft = 5 * 60 * 1000L
+        timerSpan = 5 * 60 * 1000L
+        timerLeft = timerSpan
         timerEnds = SystemClock.elapsedRealtime() + timerLeft
         timerDoneAt = 0.0
         present(face("timer", "timer", "", "5:00", "Timer", "5 min timer", "5:00", 0xFFFF9F0A.toInt(), 1f, 50.0, 50))
@@ -536,23 +659,39 @@ class IslandPillView(context: Context) : View(context) {
 
     private fun toggle(key: String, show: () -> Unit) {
         if (sample == key) {
-            clearAll()
+            dismissPreview()
             return
         }
-        clearAll()
+        if (liveOwns(key)) return
+        dismissPreview()
         sample = key
         show()
     }
 
-    private fun clearAll() {
-        releaseMic()
+    private fun liveOwns(key: String) = when (key) {
+        "music" -> liveMusic
+        "call" -> liveCall
+        "message" -> liveMessage
+        "timer" -> liveTimer
+        else -> false
+    }
+
+    private fun dismissPreview() {
+        val keep = buildSet {
+            if (liveMusic) add("now-playing")
+            if (liveCall) add("call")
+            if (liveMessage) add("message")
+            if (liveTimer) add("timer")
+        }
+        if (sample?.startsWith("record") == true) releaseMic()
         sample = null
-        mediaTrack = null
-        faces.clear()
-        timerDoneAt = 0.0
-        uploadStarted = 0L
-        transferStarted = 0L
-        rig.endAll()
+        for (id in faces.keys.filter { it !in keep }) {
+            faces.remove(id)
+            rig.end(id)
+        }
+        if (!liveTimer) timerDoneAt = 0.0
+        if ("upload" !in keep) uploadStarted = 0L
+        if ("transfer" !in keep) transferStarted = 0L
         kick()
     }
 

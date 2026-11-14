@@ -43,6 +43,8 @@ object IslandBridge {
         val names = mutableListOf(
             Manifest.permission.READ_PHONE_STATE,
             Manifest.permission.ANSWER_PHONE_CALLS,
+            Manifest.permission.READ_CALL_LOG,
+            Manifest.permission.READ_CONTACTS,
             Manifest.permission.READ_SMS,
             Manifest.permission.RECEIVE_SMS,
             Manifest.permission.READ_CALENDAR,
@@ -58,6 +60,8 @@ object IslandBridge {
             "type" to "permissions",
             "READ_PHONE_STATE" to granted(Manifest.permission.READ_PHONE_STATE),
             "ANSWER_PHONE_CALLS" to granted(Manifest.permission.ANSWER_PHONE_CALLS),
+            "READ_CALL_LOG" to granted(Manifest.permission.READ_CALL_LOG),
+            "READ_CONTACTS" to granted(Manifest.permission.READ_CONTACTS),
             "READ_SMS" to granted(Manifest.permission.READ_SMS),
             "RECEIVE_SMS" to granted(Manifest.permission.RECEIVE_SMS),
             "READ_CALENDAR" to granted(Manifest.permission.READ_CALENDAR),

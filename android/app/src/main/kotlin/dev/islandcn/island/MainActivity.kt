@@ -89,7 +89,7 @@ class MainActivity : FlutterActivity() {
             }
             "overlay" -> startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             "notifications" -> startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-            "phone" -> ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.READ_PHONE_STATE, Manifest.permission.ANSWER_PHONE_CALLS), 41)
+            "phone" -> ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.READ_PHONE_STATE, Manifest.permission.ANSWER_PHONE_CALLS, Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS), 41)
         }
     }
 }

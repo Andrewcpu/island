@@ -148,7 +148,7 @@ object IslandMedia {
                         remember(uri, scale(decoded))
                         failedKey = null
                     }
-                    IslandOverlayService.onMedia(current(app))
+                    IslandOverlayService.onMedia(app, current(app))
                 }
             }.start()
         }
