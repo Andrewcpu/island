@@ -532,26 +532,38 @@ internal object IslandModes {
         }
     }
 
-    /** Short label under the camera, across the island. Not the compact title. */
+    /** Short label under the camera. The icon is the call contact's circle, on the left. */
     private fun liveExpanded(canvas: Canvas, pill: DRect, hole: DRect, label: String, detail: String, alpha: Int, icon: Bitmap?) {
+        val circle = DRect(pill.left + 16.3, pill.top + 16.8, pill.left + 66.3, pill.top + 66.8)
+        iconCircle(canvas, circle, icon, alpha)
         val row = max(hole.bottom + 12.0, pill.top + 40.0)
-        val left = pill.left + 18.0
+        val edge = pill.left + 18.0
         val right = pill.right - 18.0
-        var textLeft = left
-        if (icon != null) {
-            val box = DRect(left, row - 2.0, left + 22.0, row + 20.0)
-            cover(canvas, icon, box, 6f, alpha)
-            textLeft = box.right + 10.0
-        }
-        val width = (right - textLeft).coerceAtLeast(24.0)
         title.color = Color.WHITE
         title.alpha = alpha
-        canvas.drawText(ellipsize(label, title, width), textLeft.toFloat(), (row + 14.0).toFloat(), title)
+        val labelLeft = beside(edge, circle, row + 14.0, title)
+        canvas.drawText(ellipsize(label, title, right - labelLeft), labelLeft.toFloat(), (row + 14.0).toFloat(), title)
         if (detail.isNotEmpty()) {
             subtitle.color = 0x9EEBEBF5.toInt()
             subtitle.alpha = alpha
-            canvas.drawText(ellipsize(detail, subtitle, width), textLeft.toFloat(), (row + 34.0).toFloat(), subtitle)
+            val detailLeft = beside(edge, circle, row + 34.0, subtitle)
+            canvas.drawText(ellipsize(detail, subtitle, right - detailLeft), detailLeft.toFloat(), (row + 34.0).toFloat(), subtitle)
         }
+    }
+
+    /** A line under the camera uses the island width, and steps past the circle when they meet. */
+    private fun beside(edge: Double, circle: DRect, baseline: Double, paint: Paint): Double {
+        val top = baseline + paint.ascent()
+        val bottom = baseline + paint.descent()
+        return if (bottom > circle.top && top < circle.bottom) max(edge, circle.right + 10.0) else edge
+    }
+
+    /** Filled disc, same place as the caller's contact circle. The icon covers it. */
+    private fun iconCircle(canvas: Canvas, rect: DRect, icon: Bitmap?, alpha: Int) {
+        fill.color = 0xFF3A3A44.toInt()
+        fill.alpha = alpha
+        canvas.drawOval(rect.toRect(), fill)
+        if (icon != null) cover(canvas, icon, rect, (min(rect.width, rect.height) / 2.0).toFloat(), alpha)
     }
 
     private fun personExpanded(canvas: Canvas, pill: DRect, name: String, body: String, alpha: Int, icon: Bitmap?) {
