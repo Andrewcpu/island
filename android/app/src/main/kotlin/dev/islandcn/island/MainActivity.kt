@@ -64,14 +64,21 @@ class MainActivity : FlutterActivity() {
             return
         }
         IslandOverlayService.start(this)
-        if (!IslandBridge.notificationAccess(this)) {
+        if (!IslandAccessibilityService.enabled(this)) {
             if (stage < 3) {
                 stage = 3
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            return
+        }
+        if (!IslandBridge.notificationAccess(this)) {
+            if (stage < 4) {
+                stage = 4
                 startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             }
             return
         }
-        stage = 4
+        stage = 5
     }
 
     fun requestAgain(kind: String) {

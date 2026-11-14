@@ -60,11 +60,14 @@ class IslandPlatform {
     return Rect.fromLTWH(left, top, width, height);
   }
 
-  Future<void> setFrame(Rect rect) => _call('setFrame', {
+  Future<void> setFrame(Rect rect, {List<Rect> touches = const []}) => _call('setFrame', {
         'left': rect.left,
         'top': rect.top,
         'width': rect.width,
         'height': rect.height,
+        'touches': [
+          for (final touch in touches) {'left': touch.left, 'top': touch.top, 'right': touch.right, 'bottom': touch.bottom},
+        ],
       });
 
   Future<void> command(String name, [Map<String, dynamic> args = const {}]) => _call('command', {'name': name, 'args': args});
@@ -92,6 +95,8 @@ class IslandPlatform {
   Future<void> openNotificationAccess() => _call('openNotificationAccess');
 
   Future<void> openOverlaySettings() => _call('openOverlaySettings');
+
+  Future<void> openAccessibilitySettings() => _call('openAccessibilitySettings');
 
   Future<void> openAppSettings() => _call('openAppSettings');
 

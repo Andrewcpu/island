@@ -160,35 +160,61 @@ class _OverlayShellState extends State<OverlayShell> {
     return Rect.fromLTRB(left, top, right, bottom);
   }
 
+  String? _held;
+
   void _publish() {
     final next = _place(_tight());
     final previous = _window;
     _window = next;
-    if (previous == null || (previous.left - next.left).abs() > 0.5 || (previous.top - next.top).abs() > 0.5 || (previous.width - next.width).abs() > 0.5 || (previous.height - next.height).abs() > 0.5) {
-      _platform.setFrame(next);
-      if (mounted) setState(() {});
-    }
+    final moved = previous == null || (previous.left - next.left).abs() > 0.5 || (previous.top - next.top).abs() > 0.5 || (previous.width - next.width).abs() > 0.5 || (previous.height - next.height).abs() > 0.5;
+    final touches = <Rect>[engine.pillRect];
+    final bubble = engine.bubbleRect;
+    if (bubble != null) touches.add(bubble);
+    _platform.setFrame(next, touches: touches);
+    if (moved && mounted) setState(() {});
+  }
+
+  void _down(Offset local, Rect window) {
+    if (engine.kind == PresentationKind.expanded) return;
+    final screen = local + window.topLeft;
+    final bubble = engine.bubbleRect;
+    final target = bubble != null && bubble.inflate(6).contains(screen) ? 'bubble' : 'pill';
+    _held = target;
+    engine.pointerDown(target);
+  }
+
+  void _up() {
+    if (_held == null) return;
+    _held = null;
+    engine.pointerUp();
   }
 
   @override
   Widget build(BuildContext context) {
     final window = _window ?? _place(_tight());
     final screen = widget.screen.width > 0 ? widget.screen : const Size(402, 874);
+    final expanded = engine.kind == PresentationKind.expanded;
     return SizedBox(
       width: window.width,
       height: window.height,
-      child: ClipRect(
-        child: OverflowBox(
-          alignment: Alignment.topLeft,
-          minWidth: screen.width,
-          maxWidth: screen.width,
-          minHeight: screen.height,
-          maxHeight: screen.height,
-          child: Transform.translate(
-            offset: Offset(-window.left, -window.top),
-            child: IslandView(
-              engine: engine,
-              builder: (spec, slot) => ActivityBody(spec: spec, slot: slot),
+      child: Listener(
+        behavior: expanded ? HitTestBehavior.deferToChild : HitTestBehavior.opaque,
+        onPointerDown: (event) => _down(event.localPosition, window),
+        onPointerUp: (_) => _up(),
+        onPointerCancel: (_) => _up(),
+        child: ClipRect(
+          child: OverflowBox(
+            alignment: Alignment.topLeft,
+            minWidth: screen.width,
+            maxWidth: screen.width,
+            minHeight: screen.height,
+            maxHeight: screen.height,
+            child: Transform.translate(
+              offset: Offset(-window.left, -window.top),
+              child: IslandView(
+                engine: engine,
+                builder: (spec, slot) => ActivityBody(spec: spec, slot: slot),
+              ),
             ),
           ),
         ),

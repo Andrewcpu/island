@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="island_accessibility">Draws the Island above the status bar, around the camera. Island does not read what is on screen.</string>
+</resources>

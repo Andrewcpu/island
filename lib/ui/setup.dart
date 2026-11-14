@@ -53,6 +53,7 @@ class _SetupPageState extends State<SetupPage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final overlay = _on('overlay');
+    final above = _on('accessibility');
     return Scaffold(
       backgroundColor: IslandColors.page,
       body: SafeArea(
@@ -62,17 +63,20 @@ class _SetupPageState extends State<SetupPage> with WidgetsBindingObserver {
             const Text('Island', style: TextStyle(color: Colors.white, fontSize: 34, fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
             Text(
-              overlay ? 'The island is drawn over other apps, around the front camera. You can leave this screen.' : 'Allow display over other apps. The island cannot draw until that permission is on.',
+              above
+                  ? 'Island is on in Accessibility, so the pill draws above the status bar. You can leave this screen.'
+                  : 'Turn on Island in Accessibility. That puts the pill above the status bar. Until then, display-over-apps keeps it behind the status bar.',
               style: const TextStyle(color: IslandColors.secondary, fontSize: 15, height: 1.35),
             ),
             const SizedBox(height: 18),
-            if (!overlay)
+            if (!above)
               FilledButton(
-                onPressed: platform.openOverlaySettings,
-                child: const Text('Allow display over other apps'),
+                onPressed: platform.openAccessibilitySettings,
+                child: const Text('Enable Island in Accessibility'),
               ),
             const SizedBox(height: 16),
             const _Heading('Permissions'),
+            _Row('Above the status bar', above, 'Enable', platform.openAccessibilitySettings),
             _Row('Display over apps', overlay, 'Allow', platform.openOverlaySettings),
             _Row('Notifications', _on('POST_NOTIFICATIONS'), 'Allow', () => platform.request(['android.permission.POST_NOTIFICATIONS'])),
             _Row('Phone', _on('READ_PHONE_STATE') && _on('ANSWER_PHONE_CALLS'), 'Allow', () => platform.request(['android.permission.READ_PHONE_STATE', 'android.permission.ANSWER_PHONE_CALLS'])),

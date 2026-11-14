@@ -65,6 +65,7 @@ object IslandBridge {
             "POST_NOTIFICATIONS" to if (Build.VERSION.SDK_INT >= 33) granted(Manifest.permission.POST_NOTIFICATIONS) else true,
             "notificationAccess" to notificationAccess(context),
             "overlay" to Settings.canDrawOverlays(context),
+            "accessibility" to IslandAccessibilityService.enabled(context),
         )
     }
 
@@ -86,6 +87,11 @@ object IslandBridge {
             "requestPermissions" -> request(context, activity, call.argument<List<String>>("permissions") ?: emptyList(), result)
             "openNotificationAccess" -> {
                 context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                result.success(mapOf("ok" to true))
+            }
+            "openAccessibilitySettings" -> {
+                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
                 result.success(mapOf("ok" to true))
             }
             "openOverlaySettings" -> {
@@ -118,9 +124,10 @@ object IslandBridge {
             "setLive" -> result.success(mapOf("ok" to true))
             "clearLive" -> result.success(mapOf("ok" to true))
             "ensureOverlay" -> {
-                val allowed = Settings.canDrawOverlays(context)
+                val accessibility = IslandAccessibilityService.enabled(context)
+                val allowed = Settings.canDrawOverlays(context) || accessibility
                 if (allowed) IslandOverlayService.start(context)
-                result.success(mapOf("ok" to allowed))
+                result.success(mapOf("ok" to allowed, "accessibility" to accessibility))
             }
             "command" -> {
                 val name = call.argument<String>("name") ?: ""
@@ -131,11 +138,14 @@ object IslandBridge {
             }
             "overlayFrame" -> result.success(IslandOverlayService.currentFrame())
             "setFrame" -> {
+                @Suppress("UNCHECKED_CAST")
+                val touches = call.argument<List<Map<String, Any?>>>("touches")
                 IslandOverlayService.applyFrame(
                     (call.argument<Number>("left"))?.toFloat() ?: 0f,
                     (call.argument<Number>("top"))?.toFloat() ?: 0f,
                     (call.argument<Number>("width"))?.toFloat() ?: 1f,
                     (call.argument<Number>("height"))?.toFloat() ?: 1f,
+                    touches,
                 )
                 result.success(mapOf("ok" to true))
             }

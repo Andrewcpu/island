@@ -9,11 +9,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.content.res.Configuration
+import android.accessibilityservice.AccessibilityService
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.RectF
+import android.graphics.Region
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
@@ -21,6 +24,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.core.app.NotificationCompat
@@ -45,6 +49,8 @@ class IslandOverlayService : Service() {
     private var appliedH = Int.MIN_VALUE
     private var shiftY = 0
     private var calibrated = false
+    private var windowType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+    private var hostContext: Context = this
     var commands: MethodChannel? = null
     var ready: Boolean = false
     private var callbacks: ComponentCallbacks? = null
@@ -54,15 +60,21 @@ class IslandOverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         instance = this
         refreshForeground()
-        if (!Settings.canDrawOverlays(this)) {
+        val accessibility = IslandAccessibilityService.instance
+        val overlay = Settings.canDrawOverlays(this)
+        if (accessibility == null && !overlay) {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (root == null) {
-            try {
-                boot()
-            } catch (error: Throwable) {
-                Log.e(TAG, "Island overlay failed to start", error)
+        try {
+            if (accessibility != null) present(accessibility, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+            else present(this, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        } catch (error: Throwable) {
+            Log.e(TAG, "Island overlay failed to start", error)
+            if (root == null && overlay) {
+                windowType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                hostContext = this
+                window = getSystemService(WindowManager::class.java)
                 showNativePill()
             }
         }
@@ -91,32 +103,62 @@ class IslandOverlayService : Service() {
         super.onDestroy()
     }
 
-    private fun boot() {
+    private fun present(context: Context, type: Int) {
+        if (root != null && windowType == type && flutterView != null) return
+        windowType = type
+        hostContext = context
+        removeWindow()
+        window = context.getSystemService(WindowManager::class.java)
         showNativePill()
+        ensureEngine()
+    }
+
+    private fun removeWindow() {
+        val flutter = flutterView
+        if (flutter != null) (flutter.parent as? ViewGroup)?.removeView(flutter)
+        val view = root
+        if (view != null) {
+            try {
+                window?.removeView(view)
+            } catch (_: Exception) {
+            }
+        }
+        root = null
+        calibrated = false
+    }
+
+    private fun ensureEngine() {
+        val created = engine
+        if (created != null) {
+            placeFlutter()
+            created.lifecycleChannel.appIsResumed()
+            return
+        }
         val loader = FlutterInjector.instance().flutterLoader()
         loader.startInitialization(applicationContext)
         loader.ensureInitializationComplete(applicationContext, null)
-        val created = FlutterEngine(this)
-        GeneratedPluginRegistrant.registerWith(created)
-        IslandBridge.install(created, applicationContext, null)
-        val channel = MethodChannel(created.dartExecutor.binaryMessenger, COMMANDS)
+        val fresh = FlutterEngine(applicationContext)
+        GeneratedPluginRegistrant.registerWith(fresh)
+        IslandBridge.install(fresh, applicationContext, null)
+        val channel = MethodChannel(fresh.dartExecutor.binaryMessenger, COMMANDS)
         commands = channel
-        val texture = FlutterTextureView(this)
+        val texture = FlutterTextureView(applicationContext)
         texture.isOpaque = false
-        val flutter = FlutterView(this, texture)
+        val flutter = FlutterView(applicationContext, texture)
         flutter.setBackgroundColor(Color.TRANSPARENT)
+        flutter.isClickable = true
         flutter.layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT,
         )
-        root?.addView(flutter)
-        flutter.attachToFlutterEngine(created)
-        created.lifecycleChannel.appIsResumed()
-        created.dartExecutor.executeDartEntrypoint(
+        engine = fresh
+        flutterView = flutter
+        placeFlutter()
+        flutter.attachToFlutterEngine(fresh)
+        fresh.lifecycleChannel.appIsResumed()
+        fresh.dartExecutor.executeDartEntrypoint(
             DartExecutor.DartEntrypoint(loader.findAppBundlePath(), "overlayMain"),
         )
-        engine = created
-        flutterView = flutter
         val watcher = object : ComponentCallbacks {
             override fun onConfigurationChanged(newConfig: Configuration) {
                 commands?.invokeMethod("metrics", null)
@@ -130,24 +172,25 @@ class IslandOverlayService : Service() {
         IslandMonitors.watchPhone(this)
     }
 
+    private fun placeFlutter() {
+        val host = root ?: return
+        val flutter = flutterView ?: return
+        if (flutter.parent === host) return
+        (flutter.parent as? ViewGroup)?.removeView(flutter)
+        host.addView(flutter)
+    }
+
     private fun showNativePill() {
         if (root != null) return
-        val manager = getSystemService(WindowManager::class.java)
+        val manager = window ?: hostContext.getSystemService(WindowManager::class.java)
         window = manager
-        val host = FrameLayout(this)
+        val host = IslandHost(hostContext)
+        host.onOutside = { commands?.invokeMethod("outside", null) }
         host.setBackgroundColor(Color.TRANSPARENT)
-        host.addView(PillBackdrop(this), FrameLayout.LayoutParams(
+        host.addView(PillBackdrop(hostContext), FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT,
         ))
-        host.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_OUTSIDE) {
-                commands?.invokeMethod("outside", null)
-                true
-            } else {
-                false
-            }
-        }
         val params = initialParams()
         manager.addView(host, params)
         root = host
@@ -203,7 +246,7 @@ class IslandOverlayService : Service() {
         return WindowManager.LayoutParams(
             width,
             height,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            windowType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -222,6 +265,7 @@ class IslandOverlayService : Service() {
                 setFitInsetsSides(0)
                 setFitInsetsIgnoringVisibility(true)
             }
+            applyTouchRegion(this, 0, 0, width, height, null)
         }
     }
 
@@ -273,6 +317,7 @@ class IslandOverlayService : Service() {
         private var requestedTop = 0f
         private var requestedWidth = 0f
         private var requestedHeight = 0f
+        private var requestedTouches: List<Map<String, Any?>>? = null
 
         @Volatile var instance: IslandOverlayService? = null
         @Volatile var useMic: Boolean = false
@@ -280,6 +325,24 @@ class IslandOverlayService : Service() {
         fun start(context: Context) {
             val intent = Intent(context, IslandOverlayService::class.java)
             ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun onAccessibilityConnected(service: AccessibilityService) {
+            val overlay = instance
+            if (overlay == null) {
+                start(service)
+                return
+            }
+            overlay.present(service, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+        }
+
+        fun onAccessibilityDisconnected() {
+            val overlay = instance ?: return
+            if (Settings.canDrawOverlays(overlay)) {
+                overlay.present(overlay, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+            } else {
+                overlay.removeWindow()
+            }
         }
 
         fun note(context: Context, title: String, body: String) {
@@ -324,7 +387,7 @@ class IslandOverlayService : Service() {
             )
         }
 
-        fun applyFrame(left: Float, top: Float, width: Float, height: Float) {
+        fun applyFrame(left: Float, top: Float, width: Float, height: Float, touches: List<Map<String, Any?>>? = null) {
             val service = instance ?: return
             val view = service.root ?: return
             val manager = service.window ?: return
@@ -333,13 +396,15 @@ class IslandOverlayService : Service() {
             requestedTop = top
             requestedWidth = width
             requestedHeight = height
+            if (touches != null) requestedTouches = touches
             val density = service.resources.displayMetrics.density
             val params = (view.layoutParams as? WindowManager.LayoutParams) ?: return
             val nextX = (left * density).toInt()
             val nextY = (top * density).toInt() - service.shiftY
             val nextW = (width * density).toInt().coerceAtLeast(1)
             val nextH = (height * density).toInt().coerceAtLeast(1)
-            if (service.appliedX == nextX && service.appliedY == nextY && service.appliedW == nextW && service.appliedH == nextH) return
+            service.applyTouchRegion(params, nextX, nextY + service.shiftY, nextW, nextH, requestedTouches)
+            if (service.appliedX == nextX && service.appliedY == nextY && service.appliedW == nextW && service.appliedH == nextH && touches == null) return
             params.x = nextX
             params.y = nextY
             params.width = nextW
@@ -354,6 +419,59 @@ class IslandOverlayService : Service() {
                 Log.w(TAG, "Overlay frame update failed", error)
             }
         }
+    }
+
+    private fun applyTouchRegion(params: WindowManager.LayoutParams, originX: Int, originY: Int, width: Int, height: Int, touches: List<Map<String, Any?>>?) {
+        val density = resources.displayMetrics.density
+        val region = Region()
+        val targets = ArrayList<RectF>()
+        if (touches != null) {
+            for (touch in touches) {
+                val left = ((touch["left"] as? Number)?.toFloat() ?: continue) * density - originX
+                val top = ((touch["top"] as? Number)?.toFloat() ?: continue) * density - originY
+                val right = ((touch["right"] as? Number)?.toFloat() ?: continue) * density - originX
+                val bottom = ((touch["bottom"] as? Number)?.toFloat() ?: continue) * density - originY
+                if (right - left < 1f || bottom - top < 1f) continue
+                targets.add(RectF(left, top, right, bottom))
+            }
+        }
+        if (targets.isEmpty()) targets.add(RectF(0f, 0f, width.toFloat(), height.toFloat()))
+        for (local in targets) {
+            val path = Path()
+            val radius = (local.height() / 2f).coerceAtMost(48f * density)
+            path.addRoundRect(local, radius, radius, Path.Direction.CW)
+            val clip = Region(local.left.toInt() - 1, local.top.toInt() - 1, local.right.toInt() + 1, local.bottom.toInt() + 1)
+            val part = Region()
+            part.setPath(path, clip)
+            region.op(part, Region.Op.UNION)
+        }
+        // The touchable-region fields are hidden. Reflection lets the gap and the
+        // capsule corners pass through; FLAG_NOT_TOUCH_MODAL already does that
+        // for anything outside the window if the platform blocks the fields.
+        try {
+            val clazz = WindowManager.LayoutParams::class.java
+            val insets = clazz.getDeclaredField("touchableInsets")
+            val regionField = clazz.getDeclaredField("touchableRegion")
+            insets.isAccessible = true
+            regionField.isAccessible = true
+            val existing = regionField.get(params) as? Region
+            if (existing == null) regionField.set(params, region) else existing.set(region)
+            insets.setInt(params, 3)
+        } catch (error: Throwable) {
+            Log.w(TAG, "Island touch region not applied", error)
+        }
+    }
+}
+
+private class IslandHost(context: Context) : FrameLayout(context) {
+    var onOutside: (() -> Unit)? = null
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_OUTSIDE) {
+            onOutside?.invoke()
+            return true
+        }
+        return super.dispatchTouchEvent(ev)
     }
 }
 

@@ -141,6 +141,36 @@ void main() {
     expect(engine.visible.single.id, 'order-b');
   });
 
+  testWidgets('a short tap runs the press action and a hold expands', (tester) async {
+    final hole = Rect.fromCenter(center: const Offset(224, 28), width: 24, height: 24);
+    final engine = IslandEngine(hole: placeHole(const Size(448, 998), [hole]));
+    final taps = <String>[];
+    engine.onPressed = taps.add;
+    engine.start(const ActivitySpec(id: 'timer', label: 'Timer', leading: 22, trailing: 46));
+    await tester.pumpWidget(MaterialApp(
+      home: SizedBox(
+        width: 448,
+        height: 998,
+        child: IslandView(engine: engine, builder: (spec, slot) => const ColoredBox(color: Color(0xFFFFFFFF))),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 400));
+    final center = tester.getTopLeft(find.byType(IslandView)) + Offset(engine.pillRect.center.dx, engine.pillRect.center.dy);
+
+    final tap = await tester.startGesture(center);
+    await tester.pump(const Duration(milliseconds: 40));
+    await tap.up();
+    await tester.pump();
+    expect(taps, ['timer']);
+    expect(engine.kind, PresentationKind.compact);
+
+    final hold = await tester.startGesture(center);
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(engine.kind, PresentationKind.expanded);
+    await hold.up();
+    await tester.pump();
+  });
+
   testWidgets('compact glyphs stay off a centered punch hole', (tester) async {
     final hole = Rect.fromCenter(center: const Offset(224, 28), width: 24, height: 24);
     final engine = IslandEngine(hole: placeHole(const Size(448, 998), [hole]));

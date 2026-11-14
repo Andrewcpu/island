@@ -87,6 +87,9 @@ class _IslandViewState extends State<IslandView> with SingleTickerProviderStateM
     return SizedBox.expand(
       child: Stack(
         children: [
+          IgnorePointer(
+            ignoring: engine.kind != PresentationKind.expanded,
+            child: Stack(children: [
           CustomPaint(
             painter: _IslandPainter(
               pill: pillPath,
@@ -101,6 +104,8 @@ class _IslandViewState extends State<IslandView> with SingleTickerProviderStateM
             size: Size.infinite,
           ),
           ..._content(pill, bubble, hole, reveal, engine.reduced ? 1 : scale),
+            ]),
+          ),
           if (engine.kind != PresentationKind.expanded && pill.width > 1)
             _hit(pill, 'pill', engine.primary?.label ?? 'Dynamic Island'),
           if (engine.kind != PresentationKind.expanded && bubble != null) _hit(bubble, 'bubble', engine.secondary?.label ?? 'Second activity'),

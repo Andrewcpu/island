@@ -2,7 +2,7 @@
 
 Android Dynamic Island. The island UI and motion are a Flutter port of the open-source [islandcn](https://github.com/opencoredev/islandcn) component (MIT). This is not a port of the islandcn.dev marketing site.
 
-The island is a real screen overlay (`TYPE_APPLICATION_OVERLAY`). It sits in the status-bar band, around the camera punch-hole (`DisplayCutout` / `WindowInsets`), and only the island itself takes touches. Taps outside it go to whatever app is underneath. On a device with no top cutout it uses a centered 28dp hole so the layout still matches a Pixel-class front camera.
+The island is a real screen overlay. With Island enabled under Accessibility it uses `TYPE_ACCESSIBILITY_OVERLAY` (layer 31), so the pill composites above the status bar and around the camera punch-hole. If that service is off, it falls back to `TYPE_APPLICATION_OVERLAY`, which Android keeps under the status bar. Only the island itself takes touches. Taps outside it go to whatever app is underneath. On a device with no top cutout it uses a centered 28dp hole so the layout still matches a Pixel-class front camera.
 
 The activity you open from the launcher is the permission and activity screen. The island stays up after you leave that screen. Android will not let an app draw the system status-bar island, so this overlay is the island.
 
@@ -70,7 +70,8 @@ Denial leaves the rest of the app usable. Each live row explains the fallback.
 | `MODIFY_AUDIO_SETTINGS` | Speaker route for the player. |
 | `POST_NOTIFICATIONS` | The one foreground-service notice Android requires. It is silent, minimum importance, and does not mirror the island. |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `FOREGROUND_SERVICE_MICROPHONE` | Keep the overlay process alive, and the mic type while recording. |
-| `SYSTEM_ALERT_WINDOW` | The island overlay. Android opens a settings screen for this. It cannot be granted from a dialog. |
+| Accessibility service | Draws the island above the status bar. Enable Island in Settings, Accessibility. It does not read the screen. |
+| `SYSTEM_ALERT_WINDOW` | Fallback overlay while the accessibility service is off. Android keeps that window under the status bar. |
 
 ## Motion
 
