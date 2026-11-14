@@ -23,6 +23,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.core.app.NotificationCompat
@@ -52,6 +53,7 @@ class IslandOverlayService : Service() {
     var commands: MethodChannel? = null
     var ready: Boolean = false
     private var callbacks: ComponentCallbacks? = null
+    private var pumpGeneration = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -126,6 +128,7 @@ class IslandOverlayService : Service() {
         }
         root = null
         calibrated = false
+        pumpGeneration += 1
     }
 
     private fun ensureEngine() {
@@ -158,13 +161,10 @@ class IslandOverlayService : Service() {
         flutterView = flutter
         placeFlutter()
         flutter.attachToFlutterEngine(fresh)
+        showFlutterFrames(flutter)
         fresh.dartExecutor.executeDartEntrypoint(
             DartExecutor.DartEntrypoint(loader.findAppBundlePath(), "overlayMain"),
         )
-        // The Android shell starts detached. appIsResumed() before Dart subscribes
-        // is dropped, and the channel will not send the same state twice, so the
-        // overlay stays paused: chips change state that never paints, and the hold
-        // ticker never reaches 0.22s. Step through inactive after the isolate is up.
         scheduleNudges()
         val watcher = object : ComponentCallbacks {
             override fun onConfigurationChanged(newConfig: Configuration) {
@@ -200,6 +200,51 @@ class IslandOverlayService : Service() {
         if (flutter.parent === host) return
         (flutter.parent as? ViewGroup)?.removeView(flutter)
         host.addView(flutter)
+        showFlutterFrames(flutter)
+    }
+
+    // An accessibility window does not composite TextureView frames, so the pill
+    // stays on the first picture. Draw Flutter into an ImageReader and copy each
+    // image onto a normal view, which the window does paint.
+    private fun showFlutterFrames(flutter: FlutterView) {
+        val switch = Runnable {
+            try {
+                if (flutter.width > 0 && flutter.height > 0 && flutter.isAttachedToWindow) {
+                    flutter.convertToImageView()
+                }
+            } catch (error: Throwable) {
+                Log.e(TAG, "Island image surface failed", error)
+            }
+            startFramePump()
+        }
+        if (flutter.width > 0 && flutter.isAttachedToWindow) {
+            flutter.post(switch)
+            return
+        }
+        val observer = flutter.viewTreeObserver
+        observer.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                if (flutter.width <= 0) return
+                if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
+                flutter.post(switch)
+            }
+        })
+    }
+
+    private fun startFramePump() {
+        val generation = ++pumpGeneration
+        val host = root ?: return
+        val tick = object : Runnable {
+            override fun run() {
+                if (generation != pumpGeneration) return
+                val view = flutterView ?: return
+                val parent = root ?: return
+                view.acquireLatestImageViewFrame()
+                view.invalidate()
+                parent.postOnAnimation(this)
+            }
+        }
+        host.postOnAnimation(tick)
     }
 
     private fun showNativePill() {
@@ -214,7 +259,15 @@ class IslandOverlayService : Service() {
             FrameLayout.LayoutParams.MATCH_PARENT,
         ))
         val params = initialParams()
-        manager.addView(host, params)
+        try {
+            manager.addView(host, params)
+        } catch (error: Exception) {
+            // A focusable accessibility window is what receives presses. If the
+            // platform rejects it, keep the pill on screen and still try to draw.
+            Log.w(TAG, "Focusable overlay was rejected", error)
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            manager.addView(host, params)
+        }
         root = host
         appliedX = params.x
         appliedY = params.y
@@ -269,8 +322,7 @@ class IslandOverlayService : Service() {
             width,
             height,
             windowType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or

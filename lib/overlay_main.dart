@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'controller.dart';
@@ -23,8 +24,8 @@ Future<void> overlayMain() async {
   await platform.overlayReady();
   var screen = Size.zero;
   try {
-    await controller.init();
-    final display = await platform.display();
+    await controller.init().timeout(const Duration(milliseconds: 600));
+    final display = await platform.display().timeout(const Duration(milliseconds: 400));
     screen = display.size;
     if (display.size.width > 0 && display.size.height > 0) {
       controller.engine.bindHole(placeHole(display.size, display.cutouts));
@@ -35,13 +36,17 @@ Future<void> overlayMain() async {
   }
   final frame = await platform.overlayFrame();
   runApp(OverlayApp(controller: controller, screen: screen, initialWindow: frame));
-  // A background engine's first lifecycle message is sent before Dart listens,
-  // and the embedding will not send it again. Frames then stay off, so setState
-  // never paints and the hold ticker never reaches 0.22s. Pump frames ourselves.
+  // This engine does not get display vsync. scheduleFrame and scheduleForcedFrame
+  // wait for a callback that never arrives, which is why v1.5.0 stayed frozen.
+  // Advance the island on a timer and draw with a warm-up frame, which does not
+  // wait for vsync.
+  final clock = Stopwatch()..start();
   Timer.periodic(const Duration(milliseconds: 16), (_) {
+    controller.engine.sync(clock.elapsedMicroseconds / 1e6);
     final binding = WidgetsBinding.instance;
-    if (binding.framesEnabled) return;
-    binding.scheduleForcedFrame();
+    if (binding.schedulerPhase == SchedulerPhase.idle) {
+      binding.scheduleWarmUpFrame();
+    }
   });
 }
 
@@ -176,9 +181,14 @@ class _OverlayShellState extends State<OverlayShell> {
   }
 
   Rect _tight() {
-    var rect = engine.pillRect;
+    // Springs lag the command. Size the window to the target immediately so a
+    // chip changes the island before the next tick.
+    final center = engine.hole.centerX;
+    var rect = engine.pillRect.expandToInclude(engine.target.pill(center));
     final bubble = engine.bubbleRect;
     if (bubble != null) rect = rect.expandToInclude(bubble);
+    final targetBubble = engine.target.bubble(center);
+    if (targetBubble != null) rect = rect.expandToInclude(targetBubble);
     rect = rect.expandToInclude(engine.hole.sensor);
     return rect;
   }
@@ -203,18 +213,15 @@ class _OverlayShellState extends State<OverlayShell> {
 
   void _publish() {
     final next = _place(_tight());
-    final previous = _window;
     _window = next;
-    final moved = previous == null || (previous.left - next.left).abs() > 0.5 || (previous.top - next.top).abs() > 0.5 || (previous.width - next.width).abs() > 0.5 || (previous.height - next.height).abs() > 0.5;
     final touches = <Rect>[engine.pillRect];
     final bubble = engine.bubbleRect;
     if (bubble != null) touches.add(bubble);
     _platform.setFrame(next, touches: touches);
-    if (moved && mounted) setState(() {});
-    // setState only schedules a frame when the engine is resumed. A background
-    // overlay starts detached, so force the rebuild that shows the new mode.
-    if (!WidgetsBinding.instance.framesEnabled) {
-      WidgetsBinding.instance.scheduleForcedFrame();
+    if (mounted) setState(() {});
+    final binding = WidgetsBinding.instance;
+    if (binding.schedulerPhase == SchedulerPhase.idle) {
+      binding.scheduleWarmUpFrame();
     }
   }
 
