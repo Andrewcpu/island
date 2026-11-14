@@ -4,56 +4,42 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.content.ComponentCallbacks
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.content.res.Configuration
-import android.accessibilityservice.AccessibilityService
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.PixelFormat
-import android.graphics.RectF
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
-import android.view.MotionEvent
-import android.view.View
-import android.view.ViewGroup
-import android.view.ViewTreeObserver
 import android.view.WindowManager
-import android.widget.FrameLayout
+import android.accessibilityservice.AccessibilityService
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
-import io.flutter.FlutterInjector
-import io.flutter.embedding.android.FlutterTextureView
-import io.flutter.embedding.android.FlutterView
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.embedding.engine.dart.DartExecutor
-import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugins.GeneratedPluginRegistrant
 
+/**
+ * Hosts the island as native views. There is no Flutter view here: a Flutter
+ * surface in this window never received vsync, and a focusable one swallowed
+ * the back gesture. FLAG_NOT_FOCUSABLE keeps key events, including back, on
+ * the app underneath. The window is only as large as the pill, and
+ * FLAG_NOT_TOUCH_MODAL lets every touch outside that rect through.
+ */
 class IslandOverlayService : Service() {
-    private var engine: FlutterEngine? = null
-    private var flutterView: FlutterView? = null
-    private var root: FrameLayout? = null
+    private var pill: IslandPillView? = null
+    private var root: IslandPillView? = null
     private var window: WindowManager? = null
+    private var windowType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+    private var hostContext: Context = this
+    private var anchorX = 0
+    private var anchorY = 0
+    private var shiftY = 0
+    private var calibrated = false
     private var appliedX = Int.MIN_VALUE
     private var appliedY = Int.MIN_VALUE
     private var appliedW = Int.MIN_VALUE
     private var appliedH = Int.MIN_VALUE
-    private var shiftY = 0
-    private var calibrated = false
-    private var windowType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-    private var hostContext: Context = this
-    var commands: MethodChannel? = null
-    var ready: Boolean = false
-    private var callbacks: ComponentCallbacks? = null
-    private var pumpGeneration = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -71,232 +57,47 @@ class IslandOverlayService : Service() {
             else present(this, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
         } catch (error: Throwable) {
             Log.e(TAG, "Island overlay failed to start", error)
-            if (root == null && overlay) {
-                windowType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                hostContext = this
-                window = getSystemService(WindowManager::class.java)
-                showNativePill()
-            }
         }
+        flushQueue()
         return START_STICKY
     }
 
     override fun onDestroy() {
         if (instance == this) instance = null
-        val view = root
-        if (view != null) {
-            try {
-                window?.removeView(view)
-            } catch (_: Exception) {
-            }
-        }
-        flutterView?.detachFromFlutterEngine()
-        flutterView = null
-        root = null
-        callbacks?.let { application.unregisterComponentCallbacks(it) }
-        callbacks = null
-        engine?.lifecycleChannel?.appIsDetached()
-        engine?.destroy()
-        engine = null
-        commands = null
-        ready = false
+        removeWindow()
+        pill = null
         super.onDestroy()
     }
 
     private fun present(context: Context, type: Int) {
-        if (root != null && windowType == type && flutterView != null) {
-            scheduleNudges()
-            return
-        }
+        if (root != null && windowType == type) return
         windowType = type
         hostContext = context
         removeWindow()
         window = context.getSystemService(WindowManager::class.java)
-        showNativePill()
-        ensureEngine()
-    }
-
-    private fun removeWindow() {
-        val flutter = flutterView
-        if (flutter != null) (flutter.parent as? ViewGroup)?.removeView(flutter)
-        val view = root
-        if (view != null) {
-            try {
-                window?.removeView(view)
-            } catch (_: Exception) {
-            }
+        val view = pill ?: IslandPillView(this).also { created ->
+            created.onLayout = { width, height, expanded -> applySize(width, height, expanded) }
+            pill = created
         }
-        root = null
-        calibrated = false
-        pumpGeneration += 1
-    }
-
-    private fun ensureEngine() {
-        val created = engine
-        if (created != null) {
-            placeFlutter()
-            scheduleNudges()
-            return
-        }
-        val loader = FlutterInjector.instance().flutterLoader()
-        loader.startInitialization(applicationContext)
-        loader.ensureInitializationComplete(applicationContext, null)
-        val fresh = FlutterEngine(applicationContext)
-        GeneratedPluginRegistrant.registerWith(fresh)
-        IslandBridge.install(fresh, applicationContext, null)
-        val channel = MethodChannel(fresh.dartExecutor.binaryMessenger, COMMANDS)
-        commands = channel
-        val texture = FlutterTextureView(hostContext)
-        texture.isOpaque = false
-        val flutter = FlutterView(hostContext, texture)
-        flutter.setBackgroundColor(Color.TRANSPARENT)
-        flutter.isClickable = true
-        flutter.isFocusable = true
-        flutter.isFocusableInTouchMode = true
-        flutter.layoutParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT,
-        )
-        engine = fresh
-        flutterView = flutter
-        placeFlutter()
-        flutter.attachToFlutterEngine(fresh)
-        showFlutterFrames(flutter)
-        fresh.dartExecutor.executeDartEntrypoint(
-            DartExecutor.DartEntrypoint(loader.findAppBundlePath(), "overlayMain"),
-        )
-        scheduleNudges()
-        val watcher = object : ComponentCallbacks {
-            override fun onConfigurationChanged(newConfig: Configuration) {
-                commands?.invokeMethod("metrics", null)
-            }
-
-            override fun onLowMemory() {}
-        }
-        callbacks = watcher
-        application.registerComponentCallbacks(watcher)
-        IslandMonitors.watchBattery(this)
-        IslandMonitors.watchPhone(this)
-    }
-
-    private fun nudgeLifecycle() {
-        val channel = engine?.lifecycleChannel ?: return
-        channel.appIsInactive()
-        channel.aWindowIsFocused()
-        channel.appIsResumed()
-    }
-
-    private fun scheduleNudges() {
-        nudgeLifecycle()
-        val host = root ?: return
-        host.postDelayed({ nudgeLifecycle() }, 150)
-        host.postDelayed({ nudgeLifecycle() }, 700)
-    }
-
-    private fun placeFlutter() {
-        val host = root ?: return
-        val flutter = flutterView ?: return
-        if (host is IslandHost) host.flutterChild = flutter
-        if (flutter.parent === host) return
-        (flutter.parent as? ViewGroup)?.removeView(flutter)
-        host.addView(flutter)
-        showFlutterFrames(flutter)
-    }
-
-    // An accessibility window does not composite TextureView frames, so the pill
-    // stays on the first picture. Draw Flutter into an ImageReader and copy each
-    // image onto a normal view, which the window does paint.
-    private fun showFlutterFrames(flutter: FlutterView) {
-        val switch = Runnable {
-            try {
-                if (flutter.width > 0 && flutter.height > 0 && flutter.isAttachedToWindow) {
-                    flutter.convertToImageView()
-                }
-            } catch (error: Throwable) {
-                Log.e(TAG, "Island image surface failed", error)
-            }
-            startFramePump()
-        }
-        if (flutter.width > 0 && flutter.isAttachedToWindow) {
-            flutter.post(switch)
-            return
-        }
-        val observer = flutter.viewTreeObserver
-        observer.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
-            override fun onGlobalLayout() {
-                if (flutter.width <= 0) return
-                if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
-                flutter.post(switch)
-            }
-        })
-    }
-
-    private fun startFramePump() {
-        val generation = ++pumpGeneration
-        val host = root ?: return
-        val tick = object : Runnable {
-            override fun run() {
-                if (generation != pumpGeneration) return
-                val view = flutterView ?: return
-                val parent = root ?: return
-                view.acquireLatestImageViewFrame()
-                view.invalidate()
-                parent.postOnAnimation(this)
-            }
-        }
-        host.postOnAnimation(tick)
-    }
-
-    private fun showNativePill() {
-        if (root != null) return
-        val manager = window ?: hostContext.getSystemService(WindowManager::class.java)
-        window = manager
-        val host = IslandHost(hostContext)
-        host.onOutside = { commands?.invokeMethod("outside", null) }
-        host.setBackgroundColor(Color.TRANSPARENT)
-        host.addView(PillBackdrop(hostContext), FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT,
-        ))
         val params = initialParams()
-        try {
-            manager.addView(host, params)
-        } catch (error: Exception) {
-            // A focusable accessibility window is what receives presses. If the
-            // platform rejects it, keep the pill on screen and still try to draw.
-            Log.w(TAG, "Focusable overlay was rejected", error)
-            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-            manager.addView(host, params)
-        }
-        root = host
+        val manager = window ?: return
+        manager.addView(view, params)
+        root = view
         appliedX = params.x
         appliedY = params.y
         appliedW = params.width
         appliedH = params.height
-        host.post { calibrateShift() }
+        view.post { calibrateShift() }
     }
 
-    private fun calibrateShift() {
-        val host = root ?: return
-        if (calibrated) return
-        val params = host.layoutParams as? WindowManager.LayoutParams ?: return
-        val loc = IntArray(2)
-        host.getLocationOnScreen(loc)
-        calibrated = true
-        val delta = loc[1] - params.y
-        if (delta <= 1) return
-        shiftY = delta
-        if (hasRequest) {
-            applyFrame(requestedLeft, requestedTop, requestedWidth, requestedHeight)
-            return
-        }
-        params.y -= delta
+    private fun removeWindow() {
+        val view = root ?: return
         try {
-            window?.updateViewLayout(host, params)
-            appliedY = params.y
-        } catch (error: Exception) {
-            Log.w(TAG, "Could not lift the island into the status bar", error)
+            window?.removeView(view)
+        } catch (_: Exception) {
         }
+        root = null
+        calibrated = false
     }
 
     private fun initialParams(): WindowManager.LayoutParams {
@@ -309,11 +110,11 @@ class IslandOverlayService : Service() {
         }
         val width = (96 * density).toInt()
         val height = (37 * density).toInt()
-        val centerX = hole?.centerX() ?: screen.centerX()
-        val centerY = hole?.centerY() ?: (18 * density).toInt()
+        anchorX = hole?.centerX() ?: screen.centerX()
+        anchorY = hole?.centerY() ?: (18 * density).toInt()
         return layoutParams(width, height).apply {
-            x = (centerX - width / 2).coerceIn(0, (screen.width() - width).coerceAtLeast(0))
-            y = centerY - height / 2
+            x = anchorX - width / 2
+            y = anchorY - height / 2
         }
     }
 
@@ -322,7 +123,11 @@ class IslandOverlayService : Service() {
             width,
             height,
             windowType,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            // NOT_FOCUSABLE is what lets the system back gesture reach the
+            // focused app. NOT_TOUCH_MODAL lets touches outside this rect through.
+            // The window is only the pill, never the full screen.
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
@@ -334,11 +139,54 @@ class IslandOverlayService : Service() {
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             }
             if (Build.VERSION.SDK_INT >= 30) {
-                // Zero types and sides, or the parent frame starts under the status bar and Gravity pushes the island down.
                 setFitInsetsTypes(0)
                 setFitInsetsSides(0)
                 setFitInsetsIgnoringVisibility(true)
             }
+        }
+    }
+
+    private fun applySize(width: Int, height: Int, expanded: Boolean) {
+        val view = root ?: return
+        val manager = window ?: return
+        val params = view.layoutParams as? WindowManager.LayoutParams ?: return
+        val idleH = (37 * resources.displayMetrics.density).toInt()
+        val nextW = width.coerceAtLeast(1)
+        val nextH = height.coerceAtLeast(1)
+        val nextX = anchorX - nextW / 2
+        val nextY = (if (expanded) anchorY - idleH / 2 else anchorY - nextH / 2) - shiftY
+        if (appliedX == nextX && appliedY == nextY && appliedW == nextW && appliedH == nextH) return
+        params.x = nextX
+        params.y = nextY
+        params.width = nextW
+        params.height = nextH
+        try {
+            manager.updateViewLayout(view, params)
+            appliedX = nextX
+            appliedY = nextY
+            appliedW = nextW
+            appliedH = nextH
+        } catch (error: Exception) {
+            Log.w(TAG, "Island resize failed", error)
+        }
+    }
+
+    private fun calibrateShift() {
+        val host = root ?: return
+        if (calibrated) return
+        val params = host.layoutParams as? WindowManager.LayoutParams ?: return
+        val loc = IntArray(2)
+        host.getLocationOnScreen(loc)
+        calibrated = true
+        val delta = loc[1] - params.y
+        if (delta <= 1) return
+        shiftY = delta
+        params.y -= delta
+        try {
+            window?.updateViewLayout(host, params)
+            appliedY = params.y
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not lift the island into the status bar", error)
         }
     }
 
@@ -380,16 +228,17 @@ class IslandOverlayService : Service() {
             .build()
     }
 
+    private fun flushQueue() {
+        val pending = queue.toList()
+        queue.clear()
+        val view = pill ?: return
+        for ((name, args) in pending) view.command(name, args)
+    }
+
     companion object {
         private const val TAG = "IslandOverlay"
         private const val CHANNEL = "island.fgs"
-        private const val COMMANDS = "dev.islandcn/commands"
         private val queue = mutableListOf<Pair<String, Map<String, Any?>>>()
-        private var hasRequest = false
-        private var requestedLeft = 0f
-        private var requestedTop = 0f
-        private var requestedWidth = 0f
-        private var requestedHeight = 0f
 
         @Volatile var instance: IslandOverlayService? = null
         @Volatile var useMic: Boolean = false
@@ -429,23 +278,16 @@ class IslandOverlayService : Service() {
         }
 
         fun dispatch(context: Context, name: String, args: Map<String, Any?>) {
-            val service = instance
-            val channel = service?.commands
-            if (service?.ready == true && channel != null) {
-                channel.invokeMethod(name, args)
-            } else {
+            val view = instance?.pill
+            if (view != null) view.command(name, args)
+            else {
                 queue.add(name to args)
                 start(context)
             }
         }
 
         fun markReady() {
-            val service = instance ?: return
-            service.ready = true
-            val channel = service.commands ?: return
-            val pending = queue.toList()
-            queue.clear()
-            for ((name, args) in pending) channel.invokeMethod(name, args)
+            instance?.flushQueue()
         }
 
         fun currentFrame(): Map<String, Double> {
@@ -459,62 +301,9 @@ class IslandOverlayService : Service() {
             )
         }
 
+        @Suppress("UNUSED_PARAMETER")
         fun applyFrame(left: Float, top: Float, width: Float, height: Float, touches: List<Map<String, Any?>>? = null) {
-            val service = instance ?: return
-            val view = service.root ?: return
-            val manager = service.window ?: return
-            hasRequest = true
-            requestedLeft = left
-            requestedTop = top
-            requestedWidth = width
-            requestedHeight = height
-            val density = service.resources.displayMetrics.density
-            val params = (view.layoutParams as? WindowManager.LayoutParams) ?: return
-            val nextX = (left * density).toInt()
-            val nextY = (top * density).toInt() - service.shiftY
-            val nextW = (width * density).toInt().coerceAtLeast(1)
-            val nextH = (height * density).toInt().coerceAtLeast(1)
-            if (service.appliedX == nextX && service.appliedY == nextY && service.appliedW == nextW && service.appliedH == nextH) return
-            params.x = nextX
-            params.y = nextY
-            params.width = nextW
-            params.height = nextH
-            try {
-                manager.updateViewLayout(view, params)
-                service.appliedX = nextX
-                service.appliedY = nextY
-                service.appliedW = nextW
-                service.appliedH = nextH
-            } catch (error: Exception) {
-                Log.w(TAG, "Overlay frame update failed", error)
-            }
+            // The native pill sizes itself. Kept so a stale caller does not crash.
         }
-    }
-}
-
-private class IslandHost(context: Context) : FrameLayout(context) {
-    var onOutside: (() -> Unit)? = null
-    var flutterChild: View? = null
-
-    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        if (ev.actionMasked == MotionEvent.ACTION_OUTSIDE) {
-            onOutside?.invoke()
-            return true
-        }
-        if (super.dispatchTouchEvent(ev)) return true
-        return flutterChild?.dispatchTouchEvent(ev) ?: false
-    }
-}
-
-private class PillBackdrop(context: Context) : View(context) {
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
-
-    override fun onDraw(canvas: Canvas) {
-        val w = width.toFloat()
-        val h = height.toFloat()
-        if (w < 1f || h < 1f) return
-        val density = resources.displayMetrics.density
-        val radius = (h / 2f).coerceAtMost(48f * density)
-        canvas.drawRoundRect(RectF(0f, 0f, w, h), radius, radius, paint)
     }
 }

@@ -1,6 +1,6 @@
 # Island
 
-Android Dynamic Island. The island UI and motion are a Flutter port of the open-source [islandcn](https://github.com/opencoredev/islandcn) component (MIT). This is not a port of the islandcn.dev marketing site.
+Android Dynamic Island, adapted from the open-source [islandcn](https://github.com/opencoredev/islandcn) component (MIT). The launcher screen is Flutter. The island itself is a native Android view. This is not a port of the islandcn.dev marketing site.
 
 The island is a real screen overlay. With Island enabled under Accessibility it uses `TYPE_ACCESSIBILITY_OVERLAY` (layer 31), so the pill composites above the status bar and around the camera punch-hole. If that service is off, it falls back to `TYPE_APPLICATION_OVERLAY`, which Android keeps under the status bar. Only the island itself takes touches. Taps outside it go to whatever app is underneath. On a device with no top cutout it uses a centered 28dp hole so the layout still matches a Pixel-class front camera.
 
