@@ -275,12 +275,13 @@ class IslandPillView(context: Context) : View(context) {
         liveStatus = true
         val label = shortLabel(title, detail)
         if (label.isEmpty()) return
+        val subtitle = shortSubtitle(detail, label)
         val existing = faces["live"]
-        if (existing != null && existing.title == label && existing.detail.isEmpty()) {
+        if (existing != null && existing.title == label && existing.detail == subtitle && existing.trail.isEmpty()) {
             existing.icon = icon ?: existing.icon
             return
         }
-        present(face("live", "screen", "", label, label, "", "", Color.WHITE, -1f, 48.0, 15).also { it.icon = icon })
+        present(face("live", "screen", "", "", label, subtitle, "", Color.WHITE, -1f, 64.0, 15).also { it.icon = icon })
     }
 
     fun onLiveStatusCleared() {
@@ -886,6 +887,7 @@ class IslandPillView(context: Context) : View(context) {
             "upload" -> 24.0 to 22.0
             "transfer", "message" -> 22.0 to 22.0
             "calendar", "order-a", "order-b" -> 22.0 to 52.0
+            "live" -> 0.0 to 0.0
             else -> {
                 val lead = when {
                     face.lead.isNotEmpty() -> compactPaint.measureText(face.lead).toDouble().coerceAtMost(72.0)
@@ -1023,7 +1025,7 @@ class IslandPillView(context: Context) : View(context) {
         canvas.restore()
     }
 
-    private fun ticking(): Boolean = faces.keys.any { it == "timer" || it == "timer-done" || it == "recording" || it == "call" || it == "upload" || it == "transfer" || it == "now-playing" }
+    private fun ticking(): Boolean = faces.keys.any { it == "timer" || it == "timer-done" || it == "recording" || it == "call" || it == "upload" || it == "transfer" || it == "now-playing" || it == "live" }
 
     private fun kick() {
         if (posted) return
@@ -1034,7 +1036,7 @@ class IslandPillView(context: Context) : View(context) {
     private fun face(id: String, glyph: String, lead: String, trail: String, title: String, detail: String, value: String, accent: Int, progress: Float, body: Double, priority: Int, group: String? = null) =
         Face(id, glyph, lead, trail, title, detail, value, accent, progress, body, priority, group)
 
-    /** Icon plus a few words. A generic live notification does not carry its whole title. */
+    /** A few words for the expanded island. The compact pill does not use this. */
     private fun shortLabel(title: String, detail: String): String {
         val source = title.trim().lineSequence().firstOrNull().orEmpty().ifBlank { detail.trim() }
         val clean = source.replace(Regex("\\s+"), " ").trim()
@@ -1042,6 +1044,15 @@ class IslandPillView(context: Context) : View(context) {
         val cut = clean.take(18)
         val space = cut.lastIndexOf(' ')
         return if (space >= 6) cut.substring(0, space) else cut
+    }
+
+    private fun shortSubtitle(detail: String, label: String): String {
+        val clean = detail.trim().replace(Regex("\\s+"), " ")
+        if (clean.isEmpty() || clean.equals(label, ignoreCase = true)) return ""
+        if (clean.length <= 28) return clean
+        val cut = clean.take(28)
+        val space = cut.lastIndexOf(' ')
+        return if (space >= 8) cut.substring(0, space) else cut
     }
 
     private fun clock(ms: Long): String {

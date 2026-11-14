@@ -86,6 +86,8 @@ internal object IslandModes {
         hits.clear()
         if (kind == Kind.EXPANDED) {
             drawExpanded(canvas, id, titleText, detail, valueText, accent, progress, glyph, elapsed, remaining, pill, hole, now, hits, alpha, art, playing, icon)
+        } else if (id == "live") {
+            liveCompact(canvas, pill, hole, icon, now, alpha)
         } else {
             drawCompact(canvas, id, titleText, detail, valueText, trail, accent, progress, leading, trailing, now, alpha, art, playing, icon)
         }
@@ -234,6 +236,7 @@ internal object IslandModes {
             "recording" -> recordingExpanded(canvas, pill, titleText, valueText, accent, detail != "Paused", hits, now, alpha)
             "upload", "transfer" -> mediaExpanded(canvas, pill, id, glyph, titleText, detail, valueText, accent, progress, alpha, icon)
             "message" -> personExpanded(canvas, pill, titleText, detail, alpha, icon)
+            "live" -> liveExpanded(canvas, pill, hole, titleText, detail, alpha, icon)
             "calendar" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, alpha, icon)
             "order-a", "order-b" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, alpha, icon)
             else -> personExpanded(canvas, pill, titleText, detail, alpha, icon)
@@ -492,6 +495,63 @@ internal object IslandModes {
         canvas.drawText(ellipsize(white, title, limit - textLeft), textLeft.toFloat(), (pill.top + 66.2).toFloat(), title)
         val ringBox = DRect(pill.right - 17.1 - 48, pill.top + 17.8, pill.right - 17.1, pill.top + 65.8)
         ring(canvas, ringBox, progress, accent, 0x29FFFFFF, 4f, alpha, if (id == "upload") valueText.removeSuffix("%") else null)
+    }
+
+    /** Icon in one ear, a pulse in the other. No title. The pill stays the sensor capsule. */
+    private fun liveCompact(canvas: Canvas, pill: DRect, hole: DRect, icon: Bitmap?, now: Double, alpha: Int) {
+        val size = 18.0
+        var iconBox = DRect(pill.left + 7.2, pill.centerY - size / 2, pill.left + 7.2 + size, pill.centerY + size / 2)
+        if (iconBox.right > hole.left - 1.5) {
+            val shift = min(0.0, hole.left - 1.5 - iconBox.right)
+            iconBox = DRect(iconBox.left + shift, iconBox.top, iconBox.right + shift, iconBox.bottom)
+        }
+        if (icon != null) cover(canvas, icon, iconBox, 5f, alpha) else glyph(canvas, "screen", iconBox, Color.WHITE, alpha)
+        val pulse = 16.0
+        var pulseBox = DRect(pill.right - 7.2 - pulse, pill.centerY - pulse / 2, pill.right - 7.2, pill.centerY + pulse / 2)
+        if (pulseBox.left < hole.right + 1.5) {
+            val shift = max(0.0, hole.right + 1.5 - pulseBox.left)
+            pulseBox = DRect(pulseBox.left + shift, pulseBox.top, pulseBox.right + shift, pulseBox.bottom)
+        }
+        livePulse(canvas, pulseBox, now, alpha)
+    }
+
+    private fun livePulse(canvas: Canvas, rect: DRect, now: Double, alpha: Int) {
+        val cx = rect.centerX.toFloat()
+        val cy = rect.centerY.toFloat()
+        val period = 1.2
+        val phase = ((now % period) / period).toFloat()
+        fill.color = Color.WHITE
+        fill.alpha = alpha
+        canvas.drawCircle(cx, cy, 2.5f, fill)
+        stroke.color = Color.WHITE
+        stroke.strokeWidth = 1.35f
+        for (offset in floatArrayOf(0f, 0.5f)) {
+            val t = (phase + offset) % 1f
+            stroke.alpha = (alpha * (1f - t) * 0.8f).toInt()
+            canvas.drawCircle(cx, cy, 3.1f + t * 6.2f, stroke)
+        }
+    }
+
+    /** Short label under the camera, across the island. Not the compact title. */
+    private fun liveExpanded(canvas: Canvas, pill: DRect, hole: DRect, label: String, detail: String, alpha: Int, icon: Bitmap?) {
+        val row = max(hole.bottom + 12.0, pill.top + 40.0)
+        val left = pill.left + 18.0
+        val right = pill.right - 18.0
+        var textLeft = left
+        if (icon != null) {
+            val box = DRect(left, row - 2.0, left + 22.0, row + 20.0)
+            cover(canvas, icon, box, 6f, alpha)
+            textLeft = box.right + 10.0
+        }
+        val width = (right - textLeft).coerceAtLeast(24.0)
+        title.color = Color.WHITE
+        title.alpha = alpha
+        canvas.drawText(ellipsize(label, title, width), textLeft.toFloat(), (row + 14.0).toFloat(), title)
+        if (detail.isNotEmpty()) {
+            subtitle.color = 0x9EEBEBF5.toInt()
+            subtitle.alpha = alpha
+            canvas.drawText(ellipsize(detail, subtitle, width), textLeft.toFloat(), (row + 34.0).toFloat(), subtitle)
+        }
     }
 
     private fun personExpanded(canvas: Canvas, pill: DRect, name: String, body: String, alpha: Int, icon: Bitmap?) {
