@@ -652,6 +652,21 @@ internal object IslandModes {
         val nubW = width * 1.9 / 36.1
         val nubH = h * 0.34
         canvas.drawRoundRect(RectF((x + bodyW + 1).toFloat(), (y + (h - nubH) / 2).toFloat(), (x + bodyW + 1 + nubW).toFloat(), (y + (h + nubH) / 2).toFloat()), 1f, 1f, fill)
+        if (!charging) return
+        val cx = (x + bodyW / 2).toFloat()
+        val cy = (y + h / 2).toFloat()
+        val s = h.toFloat()
+        val bolt = android.graphics.Path()
+        bolt.moveTo(cx + s * 0.06f, cy - s * 0.38f)
+        bolt.lineTo(cx - s * 0.20f, cy + s * 0.02f)
+        bolt.lineTo(cx - s * 0.02f, cy + s * 0.02f)
+        bolt.lineTo(cx - s * 0.10f, cy + s * 0.38f)
+        bolt.lineTo(cx + s * 0.22f, cy - s * 0.04f)
+        bolt.lineTo(cx + s * 0.02f, cy - s * 0.04f)
+        bolt.close()
+        fill.color = 0xFF10210F.toInt()
+        fill.alpha = alpha
+        canvas.drawPath(bolt, fill)
     }
 
     private val coverPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)

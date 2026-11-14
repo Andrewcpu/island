@@ -48,6 +48,7 @@ class IslandPillView(context: Context) : View(context) {
     private var liveProgress = false
     private var liveRide = false
     private var liveStatus = false
+    private var liveBattery = false
     private var callerLabel = ""
     private var timerSpan = 5 * 60 * 1000L
     private var timerEnds = 0L
@@ -759,18 +760,49 @@ class IslandPillView(context: Context) : View(context) {
         present(face("now-playing", "note", "", "", track.title, artist, state, IslandModes.coverAccent(track.title), fraction, 144.0, 40))
     }
 
+    fun onLiveBattery(percent: Int, charging: Boolean) {
+        liveBattery = true
+        if (sample == "battery") sample = null
+        val next = batteryFace(percent.coerceIn(0, 100), charging)
+        val existing = faces["battery"]
+        if (existing != null) {
+            if (existing.title == next.title && existing.detail == next.detail && existing.value == next.value) return
+            existing.lead = next.lead
+            existing.trail = next.trail
+            existing.title = next.title
+            existing.detail = next.detail
+            existing.value = next.value
+            kick()
+            return
+        }
+        present(next)
+    }
+
+    fun onLiveBatteryCleared() {
+        liveBattery = false
+        if (sample == "battery") return
+        if (faces.remove("battery") != null) {
+            rig.end("battery")
+            kick()
+        }
+    }
+
     private fun showBattery() {
         val battery = IslandMonitors.battery(context)
         val level = (battery["level"] as? Number)?.toInt() ?: 0
         val scale = (battery["scale"] as? Number)?.toInt()?.coerceAtLeast(1) ?: 100
         val percent = (level * 100 / scale).coerceIn(0, 100)
-        val charging = battery["charging"] == true
+        present(batteryFace(percent, battery["charging"] == true || battery["plugged"] == true))
+    }
+
+    private fun batteryFace(percent: Int, charging: Boolean): Face {
         val title = when {
             charging && percent >= 100 -> "Charged"
             charging -> "Charging"
             else -> "Battery"
         }
         val detail = when {
+            charging && percent >= 100 -> "Fully charged"
             charging -> "Plugged in"
             percent < 20 -> "Low battery"
             else -> "Not charging"
@@ -780,7 +812,7 @@ class IslandPillView(context: Context) : View(context) {
             percent < 20 -> 0xFFFF453A.toInt()
             else -> Color.WHITE
         }
-        present(face("battery", "battery", title, "$percent%", title, detail, "$percent%", accent, -1f, 48.0, 10))
+        return face("battery", "battery", title, "$percent%", title, detail, "$percent%", accent, -1f, 48.0, 10)
     }
 
     private fun present(face: Face, alert: Boolean = false) {
@@ -809,6 +841,7 @@ class IslandPillView(context: Context) : View(context) {
         "timer" -> liveTimer
         "upload" -> liveProgress
         "delivery", "ride" -> liveRide
+        "battery" -> liveBattery
         else -> false
     }
 
@@ -821,6 +854,7 @@ class IslandPillView(context: Context) : View(context) {
             if (liveProgress) add("upload")
             if (liveRide) add("eta")
             if (liveStatus) add("live")
+            if (liveBattery) add("battery")
         }
         if (sample?.startsWith("record") == true) releaseMic()
         sample = null

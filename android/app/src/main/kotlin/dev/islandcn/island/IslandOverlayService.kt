@@ -59,6 +59,7 @@ class IslandOverlayService : Service() {
         flushQueue()
         pill?.let { IslandOverlayService.applyLive(it) }
         IslandMonitors.watchPhone(this)
+        IslandMonitors.watchBattery(this)
         IslandNotificationListener.instance?.resync()
         return START_STICKY
     }
@@ -239,6 +240,7 @@ class IslandOverlayService : Service() {
         private var latestProgress: ProgressSnap? = null
         private var latestRide: RideSnap? = null
         private var latestStatus: Pair<String, String>? = null
+        private var latestBattery: Pair<Int, Boolean>? = null
         private var latestCallIcon: android.graphics.Bitmap? = null
         private var latestMissedIcon: android.graphics.Bitmap? = null
         private var latestMessageIcon: android.graphics.Bitmap? = null
@@ -349,6 +351,18 @@ class IslandOverlayService : Service() {
             instance?.pill?.onLiveRideCleared()
         }
 
+        fun batteryLive(): Boolean = latestBattery != null
+
+        fun onBattery(context: Context, percent: Int, charging: Boolean) {
+            latestBattery = percent to charging
+            deliver(context) { it.onLiveBattery(percent, charging) }
+        }
+
+        fun onBatteryCleared() {
+            latestBattery = null
+            instance?.pill?.onLiveBatteryCleared()
+        }
+
         fun onStatus(context: Context, title: String, detail: String, icon: android.graphics.Bitmap? = null) {
             latestStatus = title to detail
             latestStatusIcon = icon ?: latestStatusIcon
@@ -379,6 +393,7 @@ class IslandOverlayService : Service() {
             latestProgress?.let { view.onLiveProgress(it.title, it.detail, it.fraction, it.label, it.icon) }
             latestRide?.let { view.onLiveRide(it.title, it.detail, it.value, it.delivery, it.icon) }
             latestStatus?.let { view.onLiveStatus(it.first, it.second, latestStatusIcon) }
+            latestBattery?.let { view.onLiveBattery(it.first, it.second) }
         }
 
         fun dispatch(context: Context, name: String, args: Map<String, Any?>) {

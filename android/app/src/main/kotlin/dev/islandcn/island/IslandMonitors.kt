@@ -25,6 +25,8 @@ import kotlin.math.sqrt
 object IslandMonitors {
     private var phoneWatching = false
     private var batteryWatching = false
+    private var wasCharging = false
+    private var batteryBaseline = false
     private var recorder: AudioRecord? = null
     @Volatile private var micRunning = false
     private var telephonyCallback: TelephonyCallback? = null
@@ -83,17 +85,67 @@ object IslandMonitors {
     fun watchBattery(context: Context) {
         if (batteryWatching) return
         batteryWatching = true
-        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
         val app = context.applicationContext
+        val initial = battery(app)
+        wasCharging = initial["charging"] == true || initial["plugged"] == true
+        batteryBaseline = true
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_BATTERY_CHANGED)
+            addAction(Intent.ACTION_POWER_CONNECTED)
+            addAction(Intent.ACTION_POWER_DISCONNECTED)
+        }
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 IslandBus.emit(battery(app))
+                when (intent?.action) {
+                    Intent.ACTION_POWER_CONNECTED -> onPower(app, connected = true, sticky = null)
+                    Intent.ACTION_POWER_DISCONNECTED -> onPower(app, connected = false, sticky = null)
+                    Intent.ACTION_BATTERY_CHANGED -> onPower(app, connected = null, sticky = intent)
+                }
             }
         }
         if (Build.VERSION.SDK_INT >= 33) {
             app.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
         } else {
             app.registerReceiver(receiver, filter)
+        }
+    }
+
+    /** Plug-in shows the battery island. Unplug leaves it. A baseline reading does not. */
+    private fun onPower(app: Context, connected: Boolean?, sticky: Intent?) {
+        val level: Int
+        val scale: Int
+        val plugged: Boolean
+        if (sticky != null) {
+            level = sticky.getIntExtra(BatteryManager.EXTRA_LEVEL, 0)
+            scale = sticky.getIntExtra(BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1)
+            plugged = sticky.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+        } else {
+            val snap = battery(app)
+            level = (snap["level"] as? Number)?.toInt() ?: 0
+            scale = (snap["scale"] as? Number)?.toInt()?.coerceAtLeast(1) ?: 100
+            plugged = snap["plugged"] == true
+        }
+        val percent = (level * 100 / scale).coerceIn(0, 100)
+        val charging = when (connected) {
+            true -> true
+            false -> false
+            null -> plugged
+        }
+        if (!batteryBaseline) {
+            wasCharging = charging
+            batteryBaseline = true
+            return
+        }
+        val started = charging && !wasCharging
+        val stopped = !charging && wasCharging
+        wasCharging = charging
+        if (stopped) {
+            IslandOverlayService.onBatteryCleared()
+            return
+        }
+        if (started || (charging && IslandOverlayService.batteryLive())) {
+            IslandOverlayService.onBattery(app, percent, true)
         }
     }
 
