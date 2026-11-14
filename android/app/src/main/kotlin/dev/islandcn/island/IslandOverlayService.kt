@@ -32,8 +32,6 @@ class IslandOverlayService : Service() {
     private var window: WindowManager? = null
     private var windowType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
     private var hostContext: Context = this
-    private var anchorX = 0
-    private var anchorY = 0
     private var shiftY = 0
     private var calibrated = false
     private var appliedX = Int.MIN_VALUE
@@ -76,10 +74,15 @@ class IslandOverlayService : Service() {
         removeWindow()
         window = context.getSystemService(WindowManager::class.java)
         val view = pill ?: IslandPillView(this).also { created ->
-            created.onLayout = { width, height, expanded -> applySize(width, height, expanded) }
+            created.onWindow = { left, top, width, height -> applyWindow(left, top, width, height) }
             pill = created
         }
-        val params = initialParams()
+        view.bindCutout()
+        val frame = view.windowFrame()
+        val params = layoutParams(frame[2], frame[3]).apply {
+            x = frame[0]
+            y = frame[1]
+        }
         val manager = window ?: return
         manager.addView(view, params)
         root = view
@@ -100,22 +103,8 @@ class IslandOverlayService : Service() {
         calibrated = false
     }
 
-    private fun initialParams(): WindowManager.LayoutParams {
-        val density = resources.displayMetrics.density
-        val metrics = getSystemService(WindowManager::class.java).currentWindowMetrics
-        val screen = metrics.bounds
-        val cutout = metrics.windowInsets.displayCutout
-        val hole = cutout?.boundingRects?.minByOrNull { rect ->
-            kotlin.math.abs(rect.centerX() - screen.centerX())
-        }
-        val width = (96 * density).toInt()
-        val height = (37 * density).toInt()
-        anchorX = hole?.centerX() ?: screen.centerX()
-        anchorY = hole?.centerY() ?: (18 * density).toInt()
-        return layoutParams(width, height).apply {
-            x = anchorX - width / 2
-            y = anchorY - height / 2
-        }
+    fun applyMedia(track: IslandMedia.Track?) {
+        pill?.onMedia(track)
     }
 
     private fun layoutParams(width: Int, height: Int): WindowManager.LayoutParams {
@@ -146,15 +135,14 @@ class IslandOverlayService : Service() {
         }
     }
 
-    private fun applySize(width: Int, height: Int, expanded: Boolean) {
+    private fun applyWindow(left: Int, top: Int, width: Int, height: Int) {
         val view = root ?: return
         val manager = window ?: return
         val params = view.layoutParams as? WindowManager.LayoutParams ?: return
-        val idleH = (37 * resources.displayMetrics.density).toInt()
         val nextW = width.coerceAtLeast(1)
         val nextH = height.coerceAtLeast(1)
-        val nextX = anchorX - nextW / 2
-        val nextY = (if (expanded) anchorY - idleH / 2 else anchorY - nextH / 2) - shiftY
+        val nextX = left
+        val nextY = top - shiftY
         if (appliedX == nextX && appliedY == nextY && appliedW == nextW && appliedH == nextH) return
         params.x = nextX
         params.y = nextY
@@ -275,6 +263,10 @@ class IslandOverlayService : Service() {
             val service = instance
             if (service != null) service.refreshForeground()
             else if (on && context != null) start(context)
+        }
+
+        fun onMedia(track: IslandMedia.Track?) {
+            instance?.applyMedia(track)
         }
 
         fun dispatch(context: Context, name: String, args: Map<String, Any?>) {

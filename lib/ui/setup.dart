@@ -107,6 +107,7 @@ class _SetupPageState extends State<SetupPage> with WidgetsBindingObserver {
                 _Chip('Split', () => _command('split')),
                 _Chip('Orders', () => _command('startOrders')),
                 _Chip('Handoff', () => _command('handoff')),
+                _Chip('Clear', () => _command('clear')),
               ],
             ),
             const SizedBox(height: 18),
@@ -142,7 +143,7 @@ class _SetupPageState extends State<SetupPage> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Tap the island for its action. Hold it to expand. A tap outside the island collapses it and still reaches the app underneath.',
+              'Tap a sample again, or Clear, to return the island to idle. Tap the island for its action. Hold it to expand. A tap outside collapses it and still reaches the app underneath.',
               style: TextStyle(color: IslandColors.tertiary, fontSize: 13, height: 1.35),
             ),
           ],

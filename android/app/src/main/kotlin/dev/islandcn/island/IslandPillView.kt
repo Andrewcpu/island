@@ -8,207 +8,258 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.SystemClock
+import android.provider.Settings
+import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
-import android.view.animation.PathInterpolator
-import android.animation.ValueAnimator
+import android.view.WindowManager
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.max
 import kotlin.math.min
 
 /**
- * The overlay island. It is a normal Android view, sized to the pill, so the
- * window around it can stay touch-through and unfocused.
+ * Native island. Shape, springs, and ear layout come from islandcn; this view
+ * only draws them and turns Try it commands into activities.
  */
 class IslandPillView(context: Context) : View(context) {
-    var onLayout: ((width: Int, height: Int, expanded: Boolean) -> Unit)? = null
+    var onWindow: ((left: Int, top: Int, width: Int, height: Int) -> Unit)? = null
 
     private val density = resources.displayMetrics.density
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
-    private val titlePaint = textPaint(15f, Color.WHITE, true)
-    private val trailPaint = textPaint(15f, Color.WHITE, true)
-    private val detailPaint = textPaint(13f, 0x99EBEBF5.toInt(), false)
-    private val bigPaint = textPaint(22f, Color.WHITE, true)
-    private val buttonText = textPaint(13f, Color.WHITE, true)
-    private val clip = Path()
-    private val body = RectF()
-    private val bubble = RectF()
-    private val declineHit = RectF()
-    private val acceptHit = RectF()
-    private val bar = RectF()
-
-    private var kind = "idle"
-    private var title = ""
-    private var trail = ""
-    private var detail = ""
-    private var accent = Color.WHITE
-    private var bubbleLabel: String? = null
-    private var expanded = false
-    private var paused = false
-    private var progress = 0f
-    private var endsAt = 0L
-    private var heldMs = 0L
-    private var talking = false
+    private val rig = IslandRig()
+    private val faces = linkedMapOf<String, Face>()
+    private var sample: String? = null
+    private var originX = 0
+    private var originY = 0
+    private var appliedL = Int.MIN_VALUE
+    private var appliedT = Int.MIN_VALUE
+    private var appliedW = Int.MIN_VALUE
+    private var appliedH = Int.MIN_VALUE
+    private var posted = false
+    private var clock0 = 0L
+    private var pressedButton: String? = null
+    private var decline = DRect(0.0, 0.0, 0.0, 0.0)
+    private var accept = DRect(0.0, 0.0, 0.0, 0.0)
+    private var timerEnds = 0L
+    private var timerLeft = 0L
+    private var timerPaused = false
+    private var timerDoneAt = 0.0
+    private var recordEnds = 0L
+    private var recordHeld = 0L
+    private var recordPaused = false
+    private var callFrom = 0L
+    private var uploadStarted = 0L
+    private var transferStarted = 0L
     private var micOn = false
+    private var mediaAt = 0L
+    private val choreographer = Choreographer.getInstance()
 
-    private var curW = dp(96)
-    private var curH = dp(37)
-    private var animator: ValueAnimator? = null
-    private var downAt = 0L
-    private var holding = false
-    private val expandHold = Runnable {
-        holding = false
-        if (kind != "idle") expand(true)
+    private val black = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+    private val keyline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.5f
+        color = 0x29FFFFFF
+    }
+    private val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x59000000.toInt() }
+    private val compactPaint = text(15f, Color.WHITE, 600)
+    private val titlePaint = text(17f, Color.WHITE, 600)
+    private val detailPaint = text(13f, 0x99EBEBF5.toInt(), 500)
+    private val valuePaint = text(28f, Color.WHITE, 700)
+    private val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 1.6f; strokeCap = Paint.Cap.ROUND }
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+
+    private val frame = Choreographer.FrameCallback {
+        posted = false
+        if (clock0 == 0L) clock0 = SystemClock.uptimeMillis()
+        val t = (SystemClock.uptimeMillis() - clock0) / 1000.0
+        advance()
+        rig.sync(t)
+        publish()
+        invalidate()
+        if (rig.animating || ticking()) kick()
     }
 
     init {
         isClickable = true
         isFocusable = false
         isFocusableInTouchMode = false
+        rig.onPressed = { id -> onTap(id) }
     }
 
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        removeCallbacks(tick)
-        post(tick)
+    fun windowFrame(): IntArray {
+        publish()
+        return intArrayOf(appliedL, appliedT, appliedW.coerceAtLeast(1), appliedH.coerceAtLeast(1))
     }
 
-    override fun onDetachedFromWindow() {
-        removeCallbacks(tick)
-        removeCallbacks(expandHold)
-        super.onDetachedFromWindow()
+    fun bindCutout() {
+        val window = context.getSystemService(WindowManager::class.java) ?: return
+        val metrics = window.currentWindowMetrics
+        val bounds = metrics.bounds
+        val cutouts = metrics.windowInsets.displayCutout?.boundingRects.orEmpty().map { rect ->
+            DRect(rect.left / density.toDouble(), rect.top / density.toDouble(), rect.right / density.toDouble(), rect.bottom / density.toDouble())
+        }
+        rig.bindHole(bounds.width() / density.toDouble(), bounds.height() / density.toDouble(), cutouts)
+        publish()
+        kick()
+    }
+
+    fun onMedia(track: IslandMedia.Track?) {
+        if (sample != "music" && sample != "split") return
+        if (track == null) {
+            if (sample == "music") clearAll()
+            else if (faces.containsKey("now-playing")) {
+                faces.remove("now-playing")
+                rig.end("now-playing")
+                kick()
+            }
+            return
+        }
+        showTrack(track)
     }
 
     fun command(name: String, args: Map<String, Any?>) {
         when (name) {
-            "outside" -> if (expanded) expand(false)
-            "startTimer" -> {
-                kind = "timer"
-                title = "Timer"
-                detail = "5 min timer"
-                accent = Color.WHITE
-                bubbleLabel = null
-                paused = false
-                heldMs = 5 * 60 * 1000L
-                endsAt = SystemClock.elapsedRealtime() + heldMs
-                expand(false)
+            "clear" -> clearAll()
+            "outside" -> {
+                rig.collapse()
+                kick()
             }
-            "playSample" -> show("music", "Low Tide Radio", "Playing", "Harbor Birds", 0xFF46F0C6.toInt(), false)
-            "incomingCall" -> {
-                talking = false
-                show("call", args["caller"]?.toString()?.ifBlank { null } ?: "Mochi", "Incoming", "Audio call", 0xFF31D259.toInt(), true)
+            "setKeyline" -> {
+                rig.setKeyline(args["value"] != false && args["value"] != "false")
+                invalidate()
             }
-            "acceptCall" -> accept()
-            "endCall" -> if (kind == "call") clear()
-            "startUpload" -> {
-                progress = 0f
-                show("upload", "Uploading", "0%", "biscuit-in-the-sun.jpg", 0xFF0A84FF.toInt(), false)
+            "setReduced" -> {
+                val mode = args["value"]?.toString() ?: "system"
+                val system = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+                rig.setReduced(mode == "always" || (mode == "system" && system))
+                kick()
+            }
+            "startTimer" -> toggle("timer") { armTimer() }
+            "playSample" -> {
+                if (sample == "music") {
+                    clearAll()
+                    return
+                }
+                val track = IslandMedia.current(context) ?: return
+                clearAll()
+                sample = "music"
+                showTrack(track)
+            }
+            "incomingCall" -> toggle("call") {
+                val caller = args["caller"]?.toString()?.ifBlank { null } ?: "Mochi"
+                callFrom = 0L
+                present(face("call", "phone", "", "Ring", caller, "Incoming call", "Ring", 0xFF31D259.toInt(), -1f, 96.0, 100), alert = true)
+            }
+            "acceptCall" -> if (faces.containsKey("call")) accept()
+            "endCall" -> if (sample == "call") clearAll()
+            "startUpload" -> toggle("upload") {
+                uploadStarted = SystemClock.elapsedRealtime()
+                present(face("upload", "upload", "", "0%", "Uploading", "biscuit-in-the-sun.jpg", "0%", 0xFF0A84FF.toInt(), 0f, 64.0, 30))
             }
             "startEta" -> {
-                val ride = args["kind"]?.toString() != "delivery"
-                if (ride) show("ride", "Alex Kim", "6 min", "Blue hatchback · 8YQ 214", 0xFFFF9F0A.toInt(), false)
-                else show("delivery", "Delivery", "6 min", "Parcel · Door", 0xFFFF9F0A.toInt(), false)
+                val delivery = args["kind"]?.toString() == "delivery"
+                val key = if (delivery) "delivery" else "ride"
+                toggle(key) {
+                    if (delivery) present(face("eta", "box", "", "6 min", "Delivery", "Parcel · Door", "6 min", 0xFFFF9F0A.toInt(), -1f, 112.0, 25))
+                    else present(face("eta", "car", "", "6 min", "Alex Kim", "Blue hatchback · 8YQ 214", "6 min", 0xFFFF9F0A.toInt(), -1f, 112.0, 25))
+                }
             }
             "startRecording" -> {
-                val recordKind = args["kind"]?.toString() ?: "audio"
-                val label = when (recordKind) {
-                    "screen" -> "Screen"
-                    "camera" -> "Camera"
-                    else -> "Voice memo"
+                val kind = args["kind"]?.toString() ?: "audio"
+                toggle("record-$kind") {
+                    if (kind == "audio") micOn = IslandMonitors.startMic(context)
+                    recordPaused = false
+                    recordHeld = 0L
+                    recordEnds = SystemClock.elapsedRealtime()
+                    val title = when (kind) {
+                        "screen" -> "Screen"
+                        "camera" -> "Camera"
+                        else -> "Voice memo"
+                    }
+                    present(face("recording", "mic", "", "0:00", title, "Recording", "0:00", 0xFFFE4345.toInt(), -1f, 78.0, 70))
                 }
-                if (recordKind == "audio") {
-                    micOn = IslandMonitors.startMic(context)
-                    if (micOn) IslandOverlayService.setMic(context, true)
-                }
-                paused = false
-                heldMs = 0L
-                endsAt = SystemClock.elapsedRealtime()
-                show("recording", label, "0:00", if (paused) "Paused" else "Recording", 0xFFFE4345.toInt(), false)
             }
-            "stopRecording" -> if (kind == "recording") clear()
-            "toggleRecording" -> if (kind == "recording") togglePause()
+            "stopRecording" -> if (sample?.startsWith("record") == true) clearAll()
+            "toggleRecording" -> if (faces.containsKey("recording")) toggleRecord()
             "startTransfer" -> {
-                progress = 0f
                 val send = args["direction"]?.toString() != "receive"
-                show(
-                    "transfer",
-                    if (send) "Sending" else "Receiving",
-                    "0%",
-                    "biscuit-in-the-sun.jpg",
-                    0xFF46F0C6.toInt(),
-                    false,
-                )
+                toggle(if (send) "send" else "receive") {
+                    transferStarted = SystemClock.elapsedRealtime()
+                    present(face("transfer", if (send) "send" else "receive", "", "0%", if (send) "Sending" else "Receiving", "biscuit-in-the-sun.jpg", "0%", 0xFF46F0C6.toInt(), 0f, 72.0, 30))
+                }
             }
-            "showMessage" -> {
-                show(
-                    "message",
-                    args["sender"]?.toString()?.ifBlank { null } ?: "Sam",
-                    "Now",
-                    args["body"]?.toString()?.ifBlank { null } ?: "The photos are in.",
-                    Color.WHITE,
-                    true,
-                )
-                postDelayed({ if (kind == "message") clear() }, 10_000)
+            "showMessage" -> toggle("message") {
+                val sender = args["sender"]?.toString()?.ifBlank { null } ?: "Sam"
+                val body = args["body"]?.toString()?.ifBlank { null } ?: "The photos are in."
+                present(face("message", "message", "", "Now", sender, body, "Now", Color.WHITE, -1f, 72.0, 80), alert = true)
             }
-            "pinEvent" -> show("event", "Design review", "15 min", "Studio", 0xFF0A84FF.toInt(), false)
-            "showBattery" -> {
-                val battery = IslandMonitors.battery(context)
-                val level = (battery["level"] as? Number)?.toInt() ?: 0
-                val scale = (battery["scale"] as? Number)?.toInt()?.coerceAtLeast(1) ?: 100
-                val percent = (level * 100 / scale).coerceIn(0, 100)
-                val charging = battery["charging"] == true
-                show("battery", if (charging) "Charging" else "Battery", "$percent%", if (charging) "Plugged in" else "Battery", 0xFF53FA6D.toInt(), false)
+            "pinEvent" -> toggle("event") {
+                present(face("calendar", "event", "", "15 min", "Design review", "Studio", "15 min", 0xFF0A84FF.toInt(), -1f, 78.0, 20))
             }
-            "split" -> {
-                kind = "timer"
-                title = "Timer"
-                detail = "5 min timer"
-                accent = Color.WHITE
-                bubbleLabel = "Music"
-                paused = false
-                heldMs = 5 * 60 * 1000L
-                endsAt = SystemClock.elapsedRealtime() + heldMs
-                expand(false)
+            "showBattery" -> toggle("battery") { showBattery() }
+            "split" -> toggle("split") {
+                armTimer()
+                val track = IslandMedia.current(context)
+                if (track != null) showTrack(track)
             }
-            "startOrders" -> show("orders", "Order 1042", "12 min", "Preparing", 0xFFFF9F0A.toInt(), false)
-            "handoff" -> show("orders", "Order 1043", "On the way", "Out for delivery", 0xFFFF9F0A.toInt(), true)
-            "setKeyline", "setReduced", "metrics" -> Unit
+            "startOrders" -> toggle("orders") {
+                present(face("order-a", "box", "", "12 min", "Order 1042", "Preparing", "12 min", 0xFFFF9F0A.toInt(), -1f, 64.0, 22, "orders"))
+            }
+            "handoff" -> {
+                if (sample == "handoff") {
+                    clearAll()
+                    return
+                }
+                if (sample != "orders" && sample != "handoff") clearAll()
+                sample = "handoff"
+                faces.remove("order-a")
+                rig.end("order-a")
+                present(face("order-b", "box", "", "On way", "Order 1043", "Out for delivery", "On way", 0xFFFF9F0A.toInt(), -1f, 64.0, 22, "orders"), alert = true)
+            }
+            else -> Unit
         }
-        invalidate()
     }
 
-    fun collapse() {
-        if (expanded) expand(false)
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        kick()
+    }
+
+    override fun onDetachedFromWindow() {
+        choreographer.removeFrameCallback(frame)
+        posted = false
+        super.onDetachedFromWindow()
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
-            collapse()
+            rig.collapse()
+            kick()
             return true
         }
         return super.dispatchTouchEvent(event)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        val x = (event.x + originX) / density.toDouble()
+        val y = (event.y + originY) / density.toDouble()
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downAt = event.eventTime
-                holding = true
-                removeCallbacks(expandHold)
-                postDelayed(expandHold, 220)
-                invalidate()
+                val bubble = rig.bubble
+                val target = if (bubble != null && contains(bubble, x, y)) "bubble" else "pill"
+                rig.pointerDown(target)
+                kick()
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                removeCallbacks(expandHold)
-                val tap = holding && event.eventTime - downAt < 220
-                holding = false
-                if (tap) onTap(event.x, event.y)
-                invalidate()
+                pressedButton = if (rig.expanded && contains(decline, x, y)) "decline" else if (rig.expanded && contains(accept, x, y)) "accept" else null
+                rig.pointerUp()
+                kick()
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                removeCallbacks(expandHold)
-                holding = false
-                invalidate()
+                rig.pointerUp()
+                kick()
                 return true
             }
         }
@@ -216,148 +267,339 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
-        val w = width.toFloat()
-        val h = height.toFloat()
-        if (w < 1f || h < 1f) return
-        val showBubble = bubbleLabel != null && h < dp(64)
-        val gap = dp(6)
-        val bubbleSize = if (showBubble) h else 0f
-        val mainW = if (showBubble) (w - gap - bubbleSize).coerceAtLeast(h) else w
-        val radius = min(h / 2f, dp(28f))
-        val inset = if (holding) dp(1f) else 0f
-        body.set(inset, inset, mainW - inset, h - inset)
-        canvas.drawRoundRect(body, radius, radius, fill)
-        if (showBubble) {
-            bubble.set(mainW + gap, inset, w - inset, h - inset)
-            canvas.drawRoundRect(bubble, radius, radius, fill)
-            drawCenter(canvas, bubbleLabel ?: "", bubble, titlePaint)
-        }
-        clip.reset()
-        clip.addRoundRect(body, radius, radius, Path.Direction.CW)
+        val pill = rig.pill
+        if (pill.width < 1 || pill.height < 1) return
         canvas.save()
-        canvas.clipPath(clip)
-        if (h < dp(64)) drawCompact(canvas, body) else drawExpanded(canvas, body)
+        canvas.translate(-originX.toFloat(), -originY.toFloat())
+        canvas.scale(density, density)
+        val scale = rig.scale.pos.toFloat()
+        val cx = pill.centerX.toFloat()
+        val cy = pill.centerY.toFloat()
+        canvas.save()
+        canvas.translate(cx, cy)
+        canvas.scale(scale, scale)
+        canvas.translate(-cx, -cy)
+        val expand = ((pill.height - 36.85) / (84.0 - 36.85)).coerceIn(0.0, 1.0)
+        if (expand > 0.02) {
+            shadow.alpha = (90 * expand).toInt()
+            canvas.save()
+            canvas.translate(0f, (8.0 * expand).toFloat())
+            canvas.drawPath(continuousRect(pill, min(rig.radius.pos, pill.height / 2), 0.72), shadow)
+            canvas.restore()
+        }
+        val sensor = continuousRect(rig.sensor, rig.sensor.height / 2, 0.72)
+        val shell = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
+        canvas.drawPath(sensor, black)
+        canvas.drawPath(shell, black)
+        val bubble = rig.bubble
+        val bubblePath = bubble?.let { continuousRect(it, it.height / 2, 0.72) }
+        if (bubblePath != null) canvas.drawPath(bubblePath, black)
+        if (bubble != null) canvas.drawPath(bridgeNeck(pill, bubble), black)
+        if (rig.showKeyline && rig.kind != Kind.IDLE) {
+            val extra = ((pill.width - rig.sensor.width) / 6.0).coerceIn(0.0, 1.0)
+            keyline.alpha = (0.16 * extra * (if (rig.kind == Kind.EXPANDED) 0.93 else 1.0) * 255).toInt()
+            if (keyline.alpha > 2) {
+                canvas.drawPath(shell, keyline)
+                if (bubblePath != null) canvas.drawPath(bubblePath, keyline)
+            }
+        }
+        canvas.restore()
+        drawContent(canvas, pill, bubble)
         canvas.restore()
     }
 
-    private fun drawCompact(canvas: Canvas, rect: RectF) {
-        val liveTrail = liveTrail()
-        val pad = dp(14)
-        val cy = rect.centerY() - (titlePaint.ascent() + titlePaint.descent()) / 2f
-        canvas.drawText(title.ifBlank { "" }, rect.left + pad, cy, titlePaint)
-        val trailW = trailPaint.measureText(liveTrail)
-        trailPaint.color = accent
-        canvas.drawText(liveTrail, rect.right - pad - trailW, cy, trailPaint)
-        trailPaint.color = Color.WHITE
-    }
-
-    private fun drawExpanded(canvas: Canvas, rect: RectF) {
-        val pad = dp(18)
-        canvas.drawText(title, rect.left + pad, rect.top + dp(36), bigPaint)
-        canvas.drawText(detail, rect.left + pad, rect.top + dp(58), detailPaint)
-        if (kind == "call" && !talking) {
-            val r = dp(25)
-            val cy = rect.bottom - dp(42)
-            declineHit.set(rect.centerX() - dp(78) - r, cy - r, rect.centerX() - dp(78) + r, cy + r)
-            acceptHit.set(rect.centerX() + dp(78) - r, cy - r, rect.centerX() + dp(78) + r, cy + r)
-            fill.color = 0xFFFE4345.toInt()
-            canvas.drawOval(declineHit, fill)
-            fill.color = 0xFF31D259.toInt()
-            canvas.drawOval(acceptHit, fill)
-            fill.color = Color.BLACK
-            drawCenter(canvas, "Decline", declineHit, buttonText)
-            drawCenter(canvas, "Accept", acceptHit, buttonText)
-        } else if (kind == "upload" || kind == "transfer") {
-            bar.set(rect.left + pad, rect.bottom - dp(28), rect.right - pad, rect.bottom - dp(22))
-            fill.color = 0x33FFFFFF
-            canvas.drawRoundRect(bar, dp(3f), dp(3f), fill)
-            bar.right = bar.left + (rect.width() - pad * 2) * progress.coerceIn(0f, 1f)
-            fill.color = accent
-            canvas.drawRoundRect(bar, dp(3f), dp(3f), fill)
-            fill.color = Color.BLACK
-        } else {
-            val live = liveTrail()
-            trailPaint.color = accent
-            canvas.drawText(live, rect.left + pad, rect.top + dp(86), trailPaint)
-            trailPaint.color = Color.WHITE
+    private fun drawContent(canvas: Canvas, pill: DRect, bubble: DRect?) {
+        val face = faces[rig.primary?.id] ?: return
+        if (rig.kind == Kind.IDLE) return
+        val reveal = reveal()
+        if (reveal <= 0f) return
+        val slots = rig.slotRects()
+        val clip = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
+        val hole = Path()
+        val opened = rig.hole.inflate(1.0)
+        hole.addOval(RectF(opened.left.toFloat(), opened.top.toFloat(), opened.right.toFloat(), opened.bottom.toFloat()), Path.Direction.CW)
+        clip.op(hole, Path.Op.DIFFERENCE)
+        canvas.save()
+        canvas.clipPath(clip)
+        compactPaint.alpha = (reveal * 255).toInt()
+        titlePaint.alpha = compactPaint.alpha
+        detailPaint.alpha = compactPaint.alpha
+        valuePaint.alpha = compactPaint.alpha
+        if (rig.kind == Kind.EXPANDED) drawExpanded(canvas, face, pill) else {
+            drawEar(canvas, face.glyph, face.lead, slots.first, false)
+            drawEar(canvas, "", face.trail, slots.second, true)
+        }
+        canvas.restore()
+        val second = faces[rig.secondary?.id]
+        if (second != null && bubble != null && rig.kind == Kind.MINIMAL) {
+            val bubbleClip = continuousRect(bubble, bubble.height / 2, 0.72)
+            canvas.save()
+            canvas.clipPath(bubbleClip)
+            val lead = DRect(bubble.left + 6.42, bubble.centerY - 11, bubble.left + 6.42 + 22, bubble.centerY + 11)
+            drawEar(canvas, second.glyph, second.lead, lead, false)
+            val room = bubble.right - 7.175 - (lead.right + 6.085)
+            val trailW = min(compactPaint.measureText(second.trail).toDouble(), room)
+            val trail = DRect(bubble.right - 7.175 - trailW, bubble.centerY - 10, bubble.right - 7.175, bubble.centerY + 10)
+            if (!trail.overlaps(rig.hole)) drawEar(canvas, "", second.trail, trail, true)
+            canvas.restore()
         }
     }
 
-    private fun drawCenter(canvas: Canvas, text: String, rect: RectF, paint: Paint) {
-        val x = rect.centerX() - paint.measureText(text) / 2f
-        val y = rect.centerY() - (paint.ascent() + paint.descent()) / 2f
-        canvas.drawText(text, x, y, paint)
+    private fun drawExpanded(canvas: Canvas, face: Face, pill: DRect) {
+        val hole = rig.hole
+        val left = pill.left + 18.5
+        val right = pill.right - 17.81
+        val titleTop = pill.top + 18.18
+        val titleLimit = hole.left - 8
+        if (titleLimit - left > 12) {
+            canvas.drawText(ellipsize(face.title, titlePaint, titleLimit - left), left.toFloat(), (titleTop - titlePaint.ascent()).toFloat(), titlePaint)
+        }
+        val detailTop = max(hole.bottom + 1.33, titleTop + 24)
+        if (detailTop + 16 < pill.bottom - 18) {
+            canvas.drawText(ellipsize(face.detail, detailPaint, right - left), left.toFloat(), (detailTop - detailPaint.ascent()).toFloat(), detailPaint)
+        }
+        valuePaint.color = face.accent
+        val value = ellipsize(face.value, valuePaint, 88.0)
+        var vx = right - valuePaint.measureText(value)
+        if (vx < hole.right + 8) vx = hole.right + 8
+        if (vx + valuePaint.measureText(value) <= right + 1) {
+            canvas.drawText(value, vx.toFloat(), (titleTop - valuePaint.ascent()).toFloat(), valuePaint)
+        }
+        if (face.id == "call" && face.value == "Ring") {
+            val r = 25.0
+            val cy = pill.bottom - 36
+            decline = DRect(pill.centerX - 78 - r, cy - r, pill.centerX - 78 + r, cy + r)
+            accept = DRect(pill.centerX + 78 - r, cy - r, pill.centerX + 78 + r, cy + r)
+            if (!decline.overlaps(hole)) {
+                fillPaint.color = 0xFFFE4345.toInt()
+                canvas.drawOval(decline.toRect(), fillPaint)
+                drawCentered(canvas, "Decline", decline, compactPaint)
+            }
+            if (!accept.overlaps(hole)) {
+                fillPaint.color = 0xFF31D259.toInt()
+                canvas.drawOval(accept.toRect(), fillPaint)
+                drawCentered(canvas, "Accept", accept, compactPaint)
+            }
+        } else {
+            decline = DRect(0.0, 0.0, 0.0, 0.0)
+            accept = DRect(0.0, 0.0, 0.0, 0.0)
+        }
+        if (face.progress >= 0f) {
+            val bar = RectF(left.toFloat(), (pill.bottom - 22).toFloat(), right.toFloat(), (pill.bottom - 18).toFloat())
+            fillPaint.color = 0x33FFFFFF
+            canvas.drawRoundRect(bar, 3f, 3f, fillPaint)
+            bar.right = bar.left + (right - left).toFloat() * face.progress.coerceIn(0f, 1f)
+            fillPaint.color = face.accent
+            canvas.drawRoundRect(bar, 3f, 3f, fillPaint)
+        }
     }
 
-    private fun onTap(x: Float, y: Float) {
-        if (expanded && kind == "call" && !talking) {
-            if (declineHit.contains(x, y)) {
-                clear()
+    private fun drawEar(canvas: Canvas, glyph: String, label: String, slot: DRect?, trail: Boolean) {
+        val rect = slot ?: return
+        if (rect.overlaps(rig.hole) || rect.width < 1) return
+        if (label.isNotEmpty()) {
+            val paint = compactPaint
+            paint.color = if (trail) (faces[rig.primary?.id]?.accent ?: Color.WHITE) else Color.WHITE
+            paint.alpha = titlePaint.alpha
+            val text = ellipsize(label, paint, rect.width)
+            val baseline = rect.centerY - (paint.ascent() + paint.descent()) / 2.0
+            val x = if (trail) rect.right - paint.measureText(text) else rect.left
+            canvas.drawText(text, x.toFloat(), baseline.toFloat(), paint)
+        } else if (glyph.isNotEmpty()) {
+            drawGlyph(canvas, glyph, rect)
+        }
+    }
+
+    private fun drawCentered(canvas: Canvas, text: String, rect: DRect, paint: Paint) {
+        paint.color = Color.WHITE
+        paint.alpha = 255
+        val x = rect.centerX - paint.measureText(text) / 2.0
+        val y = rect.centerY - (paint.ascent() + paint.descent()) / 2.0
+        canvas.drawText(text, x.toFloat(), y.toFloat(), paint)
+    }
+
+    private fun drawGlyph(canvas: Canvas, glyph: String, rect: DRect) {
+        val cx = rect.centerX.toFloat()
+        val cy = rect.centerY.toFloat()
+        val r = (min(rect.width, rect.height) / 2.0).toFloat().coerceAtMost(11f)
+        glyphPaint.color = Color.WHITE
+        fillPaint.color = Color.WHITE
+        when (glyph) {
+            "timer" -> canvas.drawCircle(cx, cy, r * 0.72f, glyphPaint)
+            "note" -> {
+                canvas.drawCircle(cx - r * 0.25f, cy + r * 0.28f, r * 0.28f, fillPaint)
+                canvas.drawLine(cx + r * 0.02f, cy + r * 0.28f, cx + r * 0.02f, cy - r * 0.55f, glyphPaint)
+                canvas.drawLine(cx + r * 0.02f, cy - r * 0.55f, cx + r * 0.45f, cy - r * 0.35f, glyphPaint)
+            }
+            "phone" -> canvas.drawCircle(cx, cy, r * 0.7f, glyphPaint)
+            "car", "box", "mic", "upload", "message", "event", "battery", "send", "receive" -> canvas.drawCircle(cx, cy, r * 0.7f, glyphPaint)
+            else -> canvas.drawCircle(cx, cy, r * 0.55f, fillPaint)
+        }
+    }
+
+    private fun onTap(id: String) {
+        when (pressedButton) {
+            "decline" -> {
+                clearAll()
                 return
             }
-            if (acceptHit.contains(x, y)) {
+            "accept" -> {
                 accept()
                 return
             }
         }
-        if (expanded) {
-            expand(false)
-            return
-        }
-        when (kind) {
-            "idle" -> Unit
-            "timer", "music", "recording" -> togglePause()
-            "message" -> clear()
-            else -> expand(true)
+        when (id) {
+            "timer" -> {
+                timerPaused = !timerPaused
+                if (timerPaused) timerLeft = (timerEnds - SystemClock.elapsedRealtime()).coerceAtLeast(0)
+                else timerEnds = SystemClock.elapsedRealtime() + timerLeft
+                refreshTimer()
+            }
+            "now-playing" -> {
+                val face = faces["now-playing"] ?: return
+                IslandMonitors.mediaAction(if (face.value == "Playing") "pause" else "play")
+            }
+            "recording" -> toggleRecord()
         }
     }
 
     private fun accept() {
-        if (kind != "call") return
-        talking = true
-        title = title.ifBlank { "Call" }
-        detail = "On the call"
-        endsAt = SystemClock.elapsedRealtime()
-        heldMs = 0L
-        expand(false)
+        val face = faces["call"] ?: return
+        callFrom = SystemClock.elapsedRealtime()
+        face.value = "0:00"
+        face.trail = "0:00"
+        face.detail = "On the call"
+        rig.collapse()
+        rig.update(specOf(face))
+        kick()
     }
 
-    private fun togglePause() {
-        paused = !paused
-        if (kind == "timer") {
-            if (paused) heldMs = (endsAt - SystemClock.elapsedRealtime()).coerceAtLeast(0)
-            else endsAt = SystemClock.elapsedRealtime() + heldMs
-        } else if (kind == "recording") {
-            if (paused) heldMs += SystemClock.elapsedRealtime() - endsAt
-            else endsAt = SystemClock.elapsedRealtime()
-        } else if (kind == "music") {
-            trail = if (paused) "Paused" else "Playing"
+    private fun toggleRecord() {
+        recordPaused = !recordPaused
+        if (recordPaused) recordHeld += SystemClock.elapsedRealtime() - recordEnds
+        else recordEnds = SystemClock.elapsedRealtime()
+        val face = faces["recording"] ?: return
+        face.detail = if (recordPaused) "Paused" else "Recording"
+        kick()
+    }
+
+    private fun advance() {
+        val nowMs = SystemClock.elapsedRealtime()
+        val timer = faces["timer"]
+        if (timer != null) {
+            val left = if (timerPaused) timerLeft else (timerEnds - nowMs).coerceAtLeast(0)
+            if (left <= 0L && !timerPaused) {
+                faces.remove("timer")
+                rig.end("timer")
+                timerDoneAt = rig.now + 6.4
+                present(face("timer-done", "timer", "", "0:00", "Time's up", "Timer", "0:00", Color.WHITE, -1f, 48.0, 60), alert = true)
+            } else {
+                val label = clock(left)
+                timer.trail = label
+                timer.value = label
+            }
         }
+        if (timerDoneAt > 0 && rig.now >= timerDoneAt) {
+            timerDoneAt = 0.0
+            faces.remove("timer-done")
+            rig.end("timer-done")
+            if (sample == "timer") sample = null
+        }
+        val recording = faces["recording"]
+        if (recording != null) {
+            val elapsed = if (recordPaused) recordHeld else recordHeld + (nowMs - recordEnds)
+            val label = clock(elapsed)
+            recording.trail = label
+            recording.value = label
+        }
+        val call = faces["call"]
+        if (call != null && call.value != "Ring" && callFrom > 0L) {
+            val label = clock(nowMs - callFrom)
+            call.trail = label
+            call.value = label
+        }
+        progress(faces["upload"], uploadStarted, 5000L)
+        progress(faces["transfer"], transferStarted, 5000L)
+        if ((sample == "music" || sample == "split") && nowMs - mediaAt > 1000L) {
+            mediaAt = nowMs
+            onMedia(IslandMedia.current(context))
+        }
+    }
+
+    private fun progress(face: Face?, started: Long, duration: Long) {
+        if (face == null || started <= 0L) return
+        val fraction = ((SystemClock.elapsedRealtime() - started).toFloat() / duration).coerceIn(0f, 1f)
+        face.progress = fraction
+        val label = if (fraction >= 1f) "Done" else "${(fraction * 100).toInt()}%"
+        face.trail = label
+        face.value = label
+        if (fraction >= 1f && SystemClock.elapsedRealtime() - started > duration + 1200) {
+            if (sample == "upload" || sample == "send" || sample == "receive") clearAll()
+        }
+    }
+
+    private fun refreshTimer() {
+        val face = faces["timer"] ?: return
+        val label = clock(if (timerPaused) timerLeft else (timerEnds - SystemClock.elapsedRealtime()).coerceAtLeast(0))
+        face.trail = label
+        face.value = label
+        face.detail = if (timerPaused) "Paused" else "5 min timer"
         invalidate()
     }
 
-    private fun show(next: String, nextTitle: String, nextTrail: String, nextDetail: String, nextAccent: Int, open: Boolean) {
-        if (kind == "recording" && next != "recording") releaseMic()
-        kind = next
-        title = nextTitle
-        trail = nextTrail
-        detail = nextDetail
-        accent = nextAccent
-        bubbleLabel = null
-        expand(open)
+    private fun armTimer() {
+        timerPaused = false
+        timerLeft = 5 * 60 * 1000L
+        timerEnds = SystemClock.elapsedRealtime() + timerLeft
+        timerDoneAt = 0.0
+        present(face("timer", "timer", "", "5:00", "Timer", "5 min timer", "5:00", Color.WHITE, -1f, 56.0, 50))
     }
 
-    private fun clear() {
+    private fun showTrack(track: IslandMedia.Track) {
+        val state = if (track.playing) "Playing" else "Paused"
+        val artist = track.artist.ifBlank { state }
+        val existing = faces["now-playing"]
+        if (existing != null && existing.title == track.title && existing.detail == artist && existing.value == state) return
+        present(face("now-playing", "note", track.title, state, track.title, artist, state, 0xFF46F0C6.toInt(), -1f, 144.0, 40))
+    }
+
+    private fun showBattery() {
+        val battery = IslandMonitors.battery(context)
+        val level = (battery["level"] as? Number)?.toInt() ?: 0
+        val scale = (battery["scale"] as? Number)?.toInt()?.coerceAtLeast(1) ?: 100
+        val percent = (level * 100 / scale).coerceIn(0, 100)
+        val charging = battery["charging"] == true
+        val title = if (charging) "Charging" else "Battery"
+        present(face("battery", "battery", title, "$percent%", title, if (charging) "Plugged in" else "Battery", "$percent%", 0xFF53FA6D.toInt(), -1f, 64.0, 10))
+    }
+
+    private fun present(face: Face, alert: Boolean = false) {
+        val fresh = !faces.containsKey(face.id)
+        faces[face.id] = face
+        val spec = specOf(face)
+        if (fresh) rig.start(spec, alert) else rig.update(spec, alert)
+        kick()
+    }
+
+    private fun toggle(key: String, show: () -> Unit) {
+        if (sample == key) {
+            clearAll()
+            return
+        }
+        clearAll()
+        sample = key
+        show()
+    }
+
+    private fun clearAll() {
         releaseMic()
-        kind = "idle"
-        title = ""
-        trail = ""
-        detail = ""
-        bubbleLabel = null
-        progress = 0f
-        talking = false
-        paused = false
-        expand(false)
+        sample = null
+        faces.clear()
+        timerDoneAt = 0.0
+        uploadStarted = 0L
+        transferStarted = 0L
+        rig.endAll()
+        kick()
     }
 
     private fun releaseMic() {
@@ -366,96 +608,110 @@ class IslandPillView(context: Context) : View(context) {
         IslandMonitors.stopMic()
     }
 
-    private fun expand(open: Boolean) {
-        expanded = open && kind != "idle"
-        val (w, h) = targetSize()
-        animate(w, h)
+    private fun specOf(face: Face): Spec {
+        val leadW = when {
+            face.lead.isNotEmpty() -> compactPaint.measureText(face.lead).toDouble().coerceAtMost(72.0)
+            face.glyph.isNotEmpty() -> 22.0
+            else -> 0.0
+        }
+        val trailW = if (face.trail.isEmpty()) 0.0 else compactPaint.measureText(face.trail).toDouble().coerceAtMost(72.0)
+        return Spec(face.id, face.priority, 0, face.group, leadW, trailW, face.minimal, face.body)
     }
 
-    private fun targetSize(): Pair<Int, Int> {
-        if (kind == "idle") return dp(96) to dp(37)
-        if (expanded) {
-            val height = if (kind == "call" && !talking) dp(156) else dp(132)
-            return dp(300) to height
-        }
-        val text = titlePaint.measureText(title) + trailPaint.measureText(liveTrail()) + dp(44f)
-        var width = text.toInt().coerceIn(dp(160), dp(280))
-        if (bubbleLabel != null) width += dp(8) + dp(37)
-        return width to dp(37)
+    private fun reveal(): Float {
+        val t = rig.now - revealAt
+        if (t < 0.16) return 0f
+        return ((t - 0.16) / 0.22).toFloat().coerceIn(0f, 1f)
     }
 
-    private fun animate(targetW: Int, targetH: Int) {
-        val fromW = if (curW > 0) curW else targetW
-        val fromH = if (curH > 0) curH else targetH
-        animator?.cancel()
-        if (fromW == targetW && fromH == targetH) {
-            curW = targetW
-            curH = targetH
-            onLayout?.invoke(targetW, targetH, expanded)
-            invalidate()
-            return
+    private var revealAt = 0.0
+    private var revealKind = Kind.IDLE
+
+    private fun publish() {
+        if (rig.kind != revealKind) {
+            revealKind = rig.kind
+            revealAt = rig.now
         }
-        animator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 280
-            interpolator = PathInterpolator(0.2f, 0.8f, 0.2f, 1f)
-            addUpdateListener { value ->
-                val t = value.animatedValue as Float
-                curW = (fromW.toFloat() * (1f - t) + targetW.toFloat() * t).toInt().coerceAtLeast(1)
-                curH = (fromH.toFloat() * (1f - t) + targetH.toFloat() * t).toInt().coerceAtLeast(1)
-                onLayout?.invoke(curW, curH, expanded)
-                invalidate()
-            }
-            start()
-        }
+        val union = boundsDp()
+        val left = floor(union.left * density).toInt() - 2
+        val top = floor(union.top * density).toInt() - 2
+        val right = ceil(union.right * density).toInt() + 2
+        val bottom = ceil(union.bottom * density).toInt() + 2
+        originX = left
+        originY = top
+        val width = (right - left).coerceAtLeast(1)
+        val height = (bottom - top).coerceAtLeast(1)
+        if (left == appliedL && top == appliedT && width == appliedW && height == appliedH) return
+        appliedL = left
+        appliedT = top
+        appliedW = width
+        appliedH = height
+        onWindow?.invoke(left, top, width, height)
     }
 
-    private val tick = object : Runnable {
-        override fun run() {
-            when (kind) {
-                "upload", "transfer" -> {
-                    if (progress < 1f) {
-                        progress = (progress + 0.04f).coerceAtMost(1f)
-                        trail = "${(progress * 100).toInt()}%"
-                        if (progress >= 1f) {
-                            trail = "Done"
-                            detail = "Finished"
-                            postDelayed({ if (kind == "upload" || kind == "transfer") clear() }, 1200)
-                        }
-                    }
-                }
-                "message" -> {
-                    // The alert stays up long enough to read, then the pill goes idle.
-                }
-            }
-            if (kind != "idle") invalidate()
-            postDelayed(this, 200)
-        }
+    private fun boundsDp(): DRect {
+        val pill = scaled(rig.pill)
+        val bubble = rig.bubble?.let { scaled(it) }
+        if (bubble == null) return pill
+        return DRect(min(pill.left, bubble.left), min(pill.top, bubble.top), max(pill.right, bubble.right), max(pill.bottom, bubble.bottom))
     }
 
-    private fun liveTrail(): String {
-        return when (kind) {
-            "timer" -> clock(if (paused) heldMs else (endsAt - SystemClock.elapsedRealtime()).coerceAtLeast(0))
-            "recording" -> clock(if (paused) heldMs else heldMs + (SystemClock.elapsedRealtime() - endsAt))
-            "call" -> if (talking) clock(SystemClock.elapsedRealtime() - endsAt) else trail
-            "music" -> if (paused) "Paused" else trail
-            else -> trail
-        }
+    private fun scaled(rect: DRect): DRect {
+        val scale = rig.scale.pos
+        val w = rect.width * scale
+        val h = rect.height * scale
+        return DRect(rect.centerX - w / 2, rect.centerY - h / 2, rect.centerX + w / 2, rect.centerY + h / 2)
     }
+
+    private fun ticking(): Boolean = faces.keys.any { it == "timer" || it == "timer-done" || it == "recording" || it == "call" || it == "upload" || it == "transfer" || it == "now-playing" }
+
+    private fun kick() {
+        if (posted) return
+        posted = true
+        choreographer.postFrameCallback(frame)
+    }
+
+    private fun face(id: String, glyph: String, lead: String, trail: String, title: String, detail: String, value: String, accent: Int, progress: Float, body: Double, priority: Int, group: String? = null) =
+        Face(id, glyph, lead, trail, title, detail, value, accent, progress, body, priority, group)
 
     private fun clock(ms: Long): String {
         val total = (ms / 1000L).toInt()
         return "%d:%02d".format(total / 60, total % 60)
     }
 
-    private fun dp(value: Int): Int = (value * density).toInt().coerceAtLeast(1)
-
-    private fun dp(value: Float): Float = value * density
-
-    private fun textPaint(sizeSp: Float, color: Int, bold: Boolean): Paint {
-        return Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = color
-            textSize = sizeSp * resources.displayMetrics.scaledDensity
-            typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-        }
+    private fun ellipsize(text: String, paint: Paint, max: Double): String {
+        if (max <= 0) return ""
+        if (paint.measureText(text) <= max) return text
+        var end = text.length
+        while (end > 0 && paint.measureText(text.substring(0, end) + "…") > max) end--
+        return if (end == 0) "…" else text.substring(0, end) + "…"
     }
+
+    private fun text(size: Float, color: Int, weight: Int) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        textSize = size
+        typeface = Typeface.create(Typeface.create("sans-serif", Typeface.NORMAL), weight, false)
+        letterSpacing = -0.2f / size
+        fontFeatureSettings = "tnum"
+    }
+
+    private fun contains(rect: DRect, x: Double, y: Double) = x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+
+    private fun DRect.toRect() = RectF(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
+
+    private class Face(
+        val id: String,
+        val glyph: String,
+        var lead: String,
+        var trail: String,
+        var title: String,
+        var detail: String,
+        var value: String,
+        val accent: Int,
+        var progress: Float,
+        val body: Double,
+        val priority: Int,
+        val group: String?,
+        val minimal: Double = 22.0,
+    )
 }

@@ -8,6 +8,15 @@ object IslandBus {
     private val main = Handler(Looper.getMainLooper())
     private val pending = mutableListOf<Map<String, Any?>>()
     private val sinks = LinkedHashSet<EventChannel.EventSink>()
+    private val natives = LinkedHashSet<(Map<String, Any?>) -> Unit>()
+
+    fun listen(listener: (Map<String, Any?>) -> Unit) {
+        natives.add(listener)
+    }
+
+    fun unlisten(listener: (Map<String, Any?>) -> Unit) {
+        natives.remove(listener)
+    }
 
     fun add(sink: EventChannel.EventSink) {
         sinks.add(sink)
@@ -20,6 +29,12 @@ object IslandBus {
 
     fun emit(event: Map<String, Any?>) {
         main.post {
+            for (listener in natives.toList()) {
+                try {
+                    listener(event)
+                } catch (_: Exception) {
+                }
+            }
             if (sinks.isEmpty()) {
                 pending.add(event)
                 if (pending.size > 40) pending.removeAt(0)

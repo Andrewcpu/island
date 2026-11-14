@@ -10,6 +10,15 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 
 class IslandNotificationListener : NotificationListenerService() {
+    override fun onListenerConnected() {
+        instance = this
+        IslandMedia.current(this)?.let { IslandOverlayService.onMedia(it) }
+    }
+
+    override fun onListenerDisconnected() {
+        if (instance == this) instance = null
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val notification = sbn?.notification ?: return
         if (sbn.packageName == packageName) return
@@ -57,19 +66,26 @@ class IslandNotificationListener : NotificationListenerService() {
     private fun emitMedia(controller: MediaController) {
         val meta = controller.metadata
         val state = controller.playbackState
+        val title = meta?.getString(MediaMetadata.METADATA_KEY_TITLE)?.trim().orEmpty()
+        val artist = meta?.getString(MediaMetadata.METADATA_KEY_ARTIST)?.trim().orEmpty()
+        val playing = state?.state == PlaybackState.STATE_PLAYING
+        val paused = state?.state == PlaybackState.STATE_PAUSED
         IslandBus.emit(
             mapOf(
                 "type" to "media",
-                "title" to (meta?.getString(MediaMetadata.METADATA_KEY_TITLE) ?: ""),
-                "artist" to (meta?.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: ""),
+                "title" to title,
+                "artist" to artist,
                 "duration" to (meta?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L),
                 "position" to (state?.position ?: 0L),
-                "playing" to (state?.state == PlaybackState.STATE_PLAYING),
+                "playing" to playing,
             ),
         )
+        if (title.isEmpty() || (!playing && !paused)) IslandOverlayService.onMedia(null)
+        else IslandOverlayService.onMedia(IslandMedia.Track(title, artist, playing))
     }
 
     companion object {
         var controls: MediaController.TransportControls? = null
+        @Volatile var instance: IslandNotificationListener? = null
     }
 }
