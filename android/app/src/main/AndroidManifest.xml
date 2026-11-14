@@ -15,7 +15,12 @@
     <application
         android:label="Island"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:hardwareAccelerated="true">
+        <!-- Skia composites a transparent TextureView. Impeller's Android backend does not, so the overlay stayed invisible. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

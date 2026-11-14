@@ -50,6 +50,16 @@ class IslandPlatform {
 
   Future<List<Rect>> cutouts() async => _rects((await _call('cutout'))['cutouts']);
 
+  Future<Rect?> overlayFrame() async {
+    final raw = await _call('overlayFrame');
+    final width = (raw['width'] as num?)?.toDouble() ?? 0;
+    final height = (raw['height'] as num?)?.toDouble() ?? 0;
+    if (width < 1 || height < 1) return null;
+    final left = (raw['left'] as num?)?.toDouble() ?? 0;
+    final top = (raw['top'] as num?)?.toDouble() ?? 0;
+    return Rect.fromLTWH(left, top, width, height);
+  }
+
   Future<void> setFrame(Rect rect) => _call('setFrame', {
         'left': rect.left,
         'top': rect.top,

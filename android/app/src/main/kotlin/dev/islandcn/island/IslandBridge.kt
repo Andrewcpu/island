@@ -135,6 +135,7 @@ object IslandBridge {
                 IslandOverlayService.dispatch(context, name, args)
                 result.success(mapOf("ok" to true))
             }
+            "overlayFrame" -> result.success(IslandOverlayService.currentFrame())
             "setFrame" -> {
                 IslandOverlayService.applyFrame(
                     (call.argument<Number>("left"))?.toFloat() ?: 0f,

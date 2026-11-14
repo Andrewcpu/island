@@ -22,8 +22,9 @@ Future<void> overlayMain() async {
     controller.deviceHoles = display.cutouts;
   }
   _commands.setMethodCallHandler((call) => _handle(controller, platform, call));
+  final frame = await platform.overlayFrame();
   await platform.overlayReady();
-  runApp(OverlayApp(controller: controller, screen: display.size));
+  runApp(OverlayApp(controller: controller, screen: display.size, initialWindow: frame));
 }
 
 Future<void> _handle(IslandController controller, IslandPlatform platform, MethodCall call) async {
@@ -81,8 +82,9 @@ Future<void> _handle(IslandController controller, IslandPlatform platform, Metho
 class OverlayApp extends StatelessWidget {
   final IslandController controller;
   final Size screen;
+  final Rect? initialWindow;
 
-  const OverlayApp({super.key, required this.controller, required this.screen});
+  const OverlayApp({super.key, required this.controller, required this.screen, this.initialWindow});
 
   @override
   Widget build(BuildContext context) {
@@ -96,7 +98,7 @@ class OverlayApp extends StatelessWidget {
       ),
       home: IslandScope(
         controller: controller,
-        child: OverlayShell(controller: controller, screen: screen),
+        child: OverlayShell(controller: controller, screen: screen, initialWindow: initialWindow),
       ),
     );
   }
@@ -105,15 +107,16 @@ class OverlayApp extends StatelessWidget {
 class OverlayShell extends StatefulWidget {
   final IslandController controller;
   final Size screen;
+  final Rect? initialWindow;
 
-  const OverlayShell({super.key, required this.controller, required this.screen});
+  const OverlayShell({super.key, required this.controller, required this.screen, this.initialWindow});
 
   @override
   State<OverlayShell> createState() => _OverlayShellState();
 }
 
 class _OverlayShellState extends State<OverlayShell> {
-  Rect? _window;
+  late Rect? _window = widget.initialWindow;
   final IslandPlatform _platform = IslandPlatform();
 
   IslandEngine get engine => widget.controller.engine;
