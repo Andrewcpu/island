@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.Person
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSession
@@ -69,7 +70,7 @@ class IslandNotificationListener : NotificationListenerService() {
             releaseCall(key)
             publishChanged(drop(key, keep = "missed"))
             missed[key] = callerName(notification) ?: "Unknown"
-            rememberIcon(key, notification)
+            rememberIcon(key, sbn)
             publishMissed()
             return
         }
@@ -80,7 +81,7 @@ class IslandNotificationListener : NotificationListenerService() {
             val state = if (type == 2) "offhook" else "ringing"
             val name = callerName(notification).orEmpty()
             callerName(notification)?.let { IslandMonitors.noteCaller(this, it, state == "offhook") }
-            IslandOverlayService.onCall(this, state, name, notificationIcon(notification))
+            IslandOverlayService.onCall(this, state, name, notificationIcon(sbn))
             return
         }
         releaseCall(key)
@@ -91,7 +92,7 @@ class IslandNotificationListener : NotificationListenerService() {
             val title = notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
             val label = if (title.isEmpty() || durationText(title)) "Timer" else title
             val paused = remaining.second
-            rememberIcon(key, notification)
+            rememberIcon(key, sbn)
             timers[key] = TimerNote(
                 endsAt = if (paused) 0L else SystemClock.elapsedRealtime() + remaining.first,
                 frozen = if (paused) remaining.first else null,
@@ -105,7 +106,7 @@ class IslandNotificationListener : NotificationListenerService() {
         if (message != null) {
             publishChanged(drop(key, keep = "message"))
             messages[key] = message
-            rememberIcon(key, notification)
+            rememberIcon(key, sbn)
             publishMessage()
             return
         }
@@ -113,7 +114,7 @@ class IslandNotificationListener : NotificationListenerService() {
         if (progress != null) {
             publishChanged(drop(key, keep = "progress"))
             progressNotes[key] = progress
-            rememberIcon(key, notification)
+            rememberIcon(key, sbn)
             publishProgress()
             return
         }
@@ -121,7 +122,7 @@ class IslandNotificationListener : NotificationListenerService() {
         if (ride != null) {
             publishChanged(drop(key, keep = "ride"))
             rides[key] = ride
-            rememberIcon(key, notification)
+            rememberIcon(key, sbn)
             publishRide()
             return
         }
@@ -134,7 +135,7 @@ class IslandNotificationListener : NotificationListenerService() {
             }
             publishChanged(drop(key, keep = "status"))
             statuses[key] = title to detail
-            rememberIcon(key, notification)
+            rememberIcon(key, sbn)
             publishStatus()
             return
         }
@@ -169,14 +170,28 @@ class IslandNotificationListener : NotificationListenerService() {
 
     private val icons = HashMap<String, Bitmap>()
 
-    private fun rememberIcon(key: String, notification: Notification) {
-        notificationIcon(notification)?.let { icons[key] = it }
+    private fun rememberIcon(key: String, sbn: StatusBarNotification) {
+        notificationIcon(sbn)?.let { icons[key] = it }
     }
 
-    /** The notification's large icon when it has one, otherwise its small icon. */
-    private fun notificationIcon(notification: Notification): Bitmap? {
-        val icon = notification.getLargeIcon() ?: notification.smallIcon ?: return null
-        val drawable = icon.loadDrawable(this) ?: return null
+    /** The notification's small icon, or the posting app's icon when it has none. */
+    private fun notificationIcon(sbn: StatusBarNotification): Bitmap? {
+        val notification = sbn.notification
+        val small = notification.smallIcon?.loadDrawable(this)?.mutate()
+        if (small != null) {
+            val tint = notification.color.takeIf { it != 0 } ?: Color.WHITE
+            small.setTint(tint)
+            return bitmapOf(small)
+        }
+        val app = try {
+            packageManager.getApplicationIcon(sbn.packageName)
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        return bitmapOf(app)
+    }
+
+    private fun bitmapOf(drawable: android.graphics.drawable.Drawable): Bitmap {
         val size = (resources.displayMetrics.density * 48f).toInt().coerceIn(32, 192)
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)

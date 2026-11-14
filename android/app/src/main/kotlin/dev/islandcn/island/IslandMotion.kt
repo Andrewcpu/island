@@ -273,6 +273,21 @@ internal class IslandRig {
     val pill: DRect
         get() = DRect(centerX + left.pos, top.pos, centerX + right.pos, top.pos + height.pos)
 
+    /** Resting pill and bubble, padded. Stable while a spring is running. */
+    fun restUnion(): DRect {
+        if (!::left.isInitialized) return pill.inflate(18.0)
+        val shape = shape(kind, measure())
+        val topEdge = shape.top
+        val body = DRect(centerX + shape.left, topEdge, centerX + shape.right, topEdge + shape.height)
+        val box = if (shape.bubbleHeight >= 1.0) {
+            val lobe = DRect(centerX + shape.bubbleLeft, topEdge, centerX + shape.bubbleRight, topEdge + shape.bubbleHeight)
+            DRect(min(body.left, lobe.left), min(body.top, lobe.top), max(body.right, lobe.right), max(body.bottom, lobe.bottom))
+        } else {
+            body
+        }
+        return box.inflate(18.0)
+    }
+
     val bubble: DRect?
         get() {
             if (bubbleHeight.pos < 1) return null
@@ -476,9 +491,6 @@ internal class IslandRig {
             for (item in due) item.second()
         }
         for (track in tracks()) track.step(now)
-        if (absorbLive && bubbleHeight.pos >= 0.5 && now >= absorbAt + 0.222 && bubbleLeft.pos >= left.pos - 1.0 && bubbleRight.pos <= right.pos + 1.0) {
-            bubbleHeight.aim(0.0, MotionSpec.tween(0.0), now)
-        }
         if (absorbLive && now > absorbAt + 0.7 && enterAlpha() > 0.98f && !left.busy && !right.busy && !height.busy && !radius.busy) {
             absorbLive = false
             bubbleCutAt = -1.0
@@ -734,6 +746,8 @@ internal class IslandRig {
         if (absorbing && !absorbLive) {
             absorbLive = true
             absorbAt = now
+        } else if (!absorbing) {
+            absorbLive = false
         }
         val edge = motion(edgeSpring(transition))
         val body = motion(bodySpring(transition))

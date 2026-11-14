@@ -13,7 +13,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import kotlin.math.ceil
-import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
@@ -874,15 +873,20 @@ class IslandPillView(context: Context) : View(context) {
             revealKind = rig.kind
             if (!absorb) revealAt = rig.now
         }
-        val union = boundsDp()
-        val left = floor(union.left * density).toInt() - 2
-        val top = floor(union.top * density).toInt() - 2
-        val right = ceil(union.right * density).toInt() + 2
-        val bottom = ceil(union.bottom * density).toInt() + 2
+        // The window is the resting island, centered on the camera in whole pixels.
+        // The spring draws inside it. Rebuilding the window from the live edges made
+        // the center step by a pixel whenever one side crossed a pixel boundary.
+        val union = rig.restUnion()
+        val camX = Math.round(rig.sensor.centerX * density).toInt()
+        val camY = Math.round(rig.sensor.centerY * density).toInt()
+        val halfW = ceil(max((camX - union.left * density), (union.right * density - camX))).toInt().coerceAtLeast(1)
+        val halfH = ceil(max((camY - union.top * density), (union.bottom * density - camY))).toInt().coerceAtLeast(1)
+        val left = camX - halfW
+        val top = camY - halfH
         originX = left
         originY = top
-        val width = (right - left).coerceAtLeast(1)
-        val height = (bottom - top).coerceAtLeast(1)
+        val width = halfW * 2
+        val height = halfH * 2
         if (left == appliedL && top == appliedT && width == appliedW && height == appliedH) return
         appliedL = left
         appliedT = top
