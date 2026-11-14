@@ -125,7 +125,8 @@ class IslandPillView(context: Context) : View(context) {
         showTrack(track)
     }
 
-    fun onLiveCall(state: String, label: String) {
+    fun onLiveCall(state: String, label: String, icon: android.graphics.Bitmap? = null) {
+        if (icon != null) callIcon = icon
         when (state) {
             "ringing" -> showLiveCall(ringing = true, label = label)
             "offhook" -> showLiveCall(ringing = false, label = label)
@@ -137,7 +138,7 @@ class IslandPillView(context: Context) : View(context) {
                 callFrom = 0L
                 if (sample == "call") return
                 if (wasRinging && missedName.isNotBlank()) {
-                    showMissed(missedName)
+                    showMissed(missedName, callIcon)
                     return
                 }
                 if (faces["call"]?.value == "Missed") return
@@ -149,9 +150,9 @@ class IslandPillView(context: Context) : View(context) {
         }
     }
 
-    fun onMissedCall(name: String) {
+    fun onMissedCall(name: String, icon: android.graphics.Bitmap? = null) {
         if (liveCall) return
-        showMissed(name)
+        showMissed(name, icon)
     }
 
     fun onMissedCallCleared() {
@@ -163,22 +164,28 @@ class IslandPillView(context: Context) : View(context) {
         kick()
     }
 
-    private fun showMissed(name: String) {
+    private fun showMissed(name: String, icon: android.graphics.Bitmap? = null) {
         val title = name.trim().ifBlank { "Unknown" }
         val existing = faces["call"]
-        if (existing != null && existing.value == "Missed" && existing.title == title) return
-        present(face("call", "missed", "", "", title, "Missed call", "Missed", Color.WHITE, -1f, 48.0, 90), alert = existing == null)
+        if (existing != null && existing.value == "Missed" && existing.title == title) {
+            existing.icon = icon ?: existing.icon
+            return
+        }
+        present(face("call", "missed", "", "", title, "Missed call", "Missed", Color.WHITE, -1f, 48.0, 90).also { it.icon = icon }, alert = existing == null)
     }
 
-    fun onLiveMessage(sender: String, body: String) {
+    fun onLiveMessage(sender: String, body: String, icon: android.graphics.Bitmap? = null) {
         val title = sender.trim()
         val text = body.trim()
         if (title.isEmpty() && text.isEmpty()) return
         liveMessage = true
         if (sample == "message") sample = null
         val existing = faces["message"]
-        if (existing != null && existing.title == title && existing.detail == text) return
-        present(face("message", "message", "", "", title, text, "", Color.WHITE, -1f, IslandModes.messageBody(text), 80), alert = existing == null)
+        if (existing != null && existing.title == title && existing.detail == text) {
+            existing.icon = icon ?: existing.icon
+            return
+        }
+        present(face("message", "message", "", "", title, text, "", Color.WHITE, -1f, IslandModes.messageBody(text), 80).also { it.icon = icon }, alert = existing == null)
     }
 
     fun onLiveMessageCleared() {
@@ -190,7 +197,7 @@ class IslandPillView(context: Context) : View(context) {
         }
     }
 
-    fun onLiveTimer(remainingMs: Long, paused: Boolean, label: String) {
+    fun onLiveTimer(remainingMs: Long, paused: Boolean, label: String, icon: android.graphics.Bitmap? = null) {
         val left = remainingMs.coerceAtLeast(0L)
         val caption = label.trim().ifBlank { "Timer" }
         if (!liveTimer || left > timerLeft + 2000L) timerSpan = left.coerceAtLeast(1L)
@@ -208,20 +215,24 @@ class IslandPillView(context: Context) : View(context) {
             existing.title = caption
             existing.detail = if (paused) "Paused" else caption
             existing.progress = left.toFloat() / timerSpan.coerceAtLeast(1L)
+            existing.icon = icon ?: existing.icon
             kick()
             return
         }
-        present(face("timer", "timer", "", text, caption, if (paused) "Paused" else caption, text, 0xFFFF9F0A.toInt(), left.toFloat() / timerSpan.coerceAtLeast(1L), 50.0, 50))
+        present(face("timer", "timer", "", text, caption, if (paused) "Paused" else caption, text, 0xFFFF9F0A.toInt(), left.toFloat() / timerSpan.coerceAtLeast(1L), 50.0, 50).also { it.icon = icon })
     }
 
-    fun onLiveProgress(title: String, detail: String, fraction: Float, label: String) {
+    fun onLiveProgress(title: String, detail: String, fraction: Float, label: String, icon: android.graphics.Bitmap? = null) {
         liveProgress = true
         if (sample == "upload") return
         val name = title.trim().ifBlank { "Progress" }
         val text = detail.trim()
         val existing = faces["upload"]
-        if (existing != null && existing.title == name && existing.detail == text && existing.value == label && existing.progress == fraction) return
-        present(face("upload", "upload", "", label, name, text, label, 0xFF0A84FF.toInt(), fraction.coerceIn(0f, 1f), 48.0, 30))
+        if (existing != null && existing.title == name && existing.detail == text && existing.value == label && existing.progress == fraction) {
+            existing.icon = icon ?: existing.icon
+            return
+        }
+        present(face("upload", "upload", "", label, name, text, label, 0xFF0A84FF.toInt(), fraction.coerceIn(0f, 1f), 48.0, 30).also { it.icon = icon })
     }
 
     fun onLiveProgressCleared() {
@@ -233,7 +244,7 @@ class IslandPillView(context: Context) : View(context) {
         }
     }
 
-    fun onLiveRide(title: String, detail: String, value: String, delivery: Boolean) {
+    fun onLiveRide(title: String, detail: String, value: String, delivery: Boolean, icon: android.graphics.Bitmap? = null) {
         liveRide = true
         if (sample == "delivery" || sample == "ride") return
         val name = title.trim().ifBlank { if (delivery) "Delivery" else "On the way" }
@@ -242,8 +253,11 @@ class IslandPillView(context: Context) : View(context) {
         val accent = if (delivery) 0xFFFFD60A.toInt() else 0xFF32D74B.toInt()
         val glyph = if (delivery) "box" else "car"
         val existing = faces["eta"]
-        if (existing != null && existing.title == name && existing.detail == text && existing.value == whenText && existing.glyph == glyph) return
-        present(face("eta", glyph, "", whenText, name, text, whenText, accent, -1f, 132.0, 25))
+        if (existing != null && existing.title == name && existing.detail == text && existing.value == whenText && existing.glyph == glyph) {
+            existing.icon = icon ?: existing.icon
+            return
+        }
+        present(face("eta", glyph, "", whenText, name, text, whenText, accent, -1f, 132.0, 25).also { it.icon = icon })
     }
 
     fun onLiveRideCleared() {
@@ -255,14 +269,17 @@ class IslandPillView(context: Context) : View(context) {
         }
     }
 
-    fun onLiveStatus(title: String, detail: String) {
+    fun onLiveStatus(title: String, detail: String, icon: android.graphics.Bitmap? = null) {
         liveStatus = true
         val name = title.trim()
         val text = detail.trim()
         if (name.isEmpty() && text.isEmpty()) return
         val existing = faces["live"]
-        if (existing != null && existing.title == name && existing.detail == text) return
-        present(face("live", "screen", "", text, name, text, "", Color.WHITE, -1f, 48.0, 15))
+        if (existing != null && existing.title == name && existing.detail == text) {
+            existing.icon = icon ?: existing.icon
+            return
+        }
+        present(face("live", "screen", "", text, name, text, "", Color.WHITE, -1f, 48.0, 15).also { it.icon = icon })
     }
 
     fun onLiveStatusCleared() {
@@ -283,6 +300,8 @@ class IslandPillView(context: Context) : View(context) {
         }
     }
 
+    private var callIcon: android.graphics.Bitmap? = null
+
     private fun showLiveCall(ringing: Boolean, label: String) {
         liveCall = true
         if (sample == "call") sample = null
@@ -292,23 +311,28 @@ class IslandPillView(context: Context) : View(context) {
         val existing = faces["call"]
         if (ringing) {
             callFrom = 0L
-            if (existing != null && existing.value == "Ring" && existing.title == title) return
+            if (existing != null && existing.value == "Ring" && existing.title == title) {
+                existing.icon = callIcon ?: existing.icon
+                return
+            }
             if (existing != null && existing.value == "Ring") {
                 existing.title = title
+                existing.icon = callIcon ?: existing.icon
                 kick()
                 return
             }
-            present(face("call", "phone", "", "Ring", title, "Audio call", "Ring", 0xFF31D259.toInt(), -1f, 48.0, 100), alert = true)
+            present(face("call", "phone", "", "Ring", title, "Audio call", "Ring", 0xFF31D259.toInt(), -1f, 48.0, 100).also { it.icon = callIcon }, alert = true)
             return
         }
         if (existing != null && existing.value != "Ring") {
             if (incoming.isNotEmpty()) existing.title = title
+            existing.icon = callIcon ?: existing.icon
             kick()
             return
         }
         if (callFrom == 0L) callFrom = SystemClock.elapsedRealtime()
         val elapsed = clock(SystemClock.elapsedRealtime() - callFrom)
-        present(face("call", "phone", "", elapsed, title, "On the call", elapsed, 0xFF76FB73.toInt(), -1f, 48.0, 100))
+        present(face("call", "phone", "", elapsed, title, "On the call", elapsed, 0xFF76FB73.toInt(), -1f, 48.0, 100).also { it.icon = callIcon })
     }
 
     fun command(name: String, args: Map<String, Any?>) {
@@ -480,8 +504,6 @@ class IslandPillView(context: Context) : View(context) {
         canvas.drawPath(continuousRect(rig.sensor, rig.sensor.height / 2, 0.72), black)
         val shell = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
         val bubble = rig.bubble
-        val swallowed = bubble != null && bubble.left < pill.right - 0.4
-        val shownBubble = if (swallowed) null else bubble
         around(canvas, pill, rig.pillScale.pos.toFloat()) {
             if (expand > 0.02) {
                 shadow.alpha = (90 * expand).toInt()
@@ -492,26 +514,26 @@ class IslandPillView(context: Context) : View(context) {
             }
             canvas.drawPath(shell, black)
         }
-        val bubblePath = shownBubble?.let { continuousRect(it, it.height / 2, 0.72) }
-        if (shownBubble != null && bubblePath != null) {
-            around(canvas, shownBubble, rig.bubbleScale.pos.toFloat()) {
+        val bubblePath = bubble?.let { continuousRect(it, it.height / 2, 0.72) }
+        if (bubble != null && bubblePath != null) {
+            around(canvas, bubble, rig.bubbleScale.pos.toFloat()) {
                 canvas.drawPath(bubblePath, black)
             }
         }
         val neckGap = if (rig.tightNeck()) 0.01 else 5.0
-        if (shownBubble != null) canvas.drawPath(bridgeNeck(pill, shownBubble, neckGap), black)
+        if (bubble != null) canvas.drawPath(bridgeNeck(pill, bubble, neckGap), black)
         val shown = rig.look()
         if (rig.showKeyline && shown != Kind.IDLE) {
             val extra = ((pill.width - rig.sensor.width) / 6.0).coerceIn(0.0, 1.0)
             keyline.alpha = (0.16 * extra * (if (shown == Kind.EXPANDED) 0.93 else 1.0) * 255).toInt()
             if (keyline.alpha > 2) {
                 around(canvas, pill, rig.pillScale.pos.toFloat()) { canvas.drawPath(shell, keyline) }
-                if (shownBubble != null && bubblePath != null) {
-                    around(canvas, shownBubble, rig.bubbleScale.pos.toFloat()) { canvas.drawPath(bubblePath, keyline) }
+                if (bubble != null && bubblePath != null) {
+                    around(canvas, bubble, rig.bubbleScale.pos.toFloat()) { canvas.drawPath(bubblePath, keyline) }
                 }
             }
         }
-        if (rig.absorbLive) drawAbsorb(canvas, pill, shownBubble) else drawContent(canvas, pill, shownBubble)
+        drawContent(canvas, pill, bubble)
         canvas.restore()
     }
 
@@ -528,46 +550,6 @@ class IslandPillView(context: Context) : View(context) {
         canvas.restore()
     }
 
-    /**
-     * Split expand from islandcn: the detached pill's content is cut before the join, the attached
-     * pill's content fades as that pill contracts, and the expanded text is drawn in the resting
-     * card so it only shows once the growing pill reaches it.
-     */
-    private fun drawAbsorb(canvas: Canvas, pill: DRect, bubble: DRect?) {
-        val exit = (rig.exitAlpha() * 255).toInt()
-        if (exit > 2 && rig.look() != Kind.EXPANDED) {
-            val primary = faces[rig.primary?.id]
-            if (primary != null) {
-                val look = if (bubble != null) Kind.MINIMAL else Kind.COMPACT
-                paintFace(canvas, primary, look, pill, exit, clip = true)
-            }
-        }
-        val second = faces[rig.secondary?.id]
-        if (second != null && bubble != null && !rig.bubbleContentGone()) {
-            val bubbleClip = continuousRect(bubble, bubble.height / 2, 0.72)
-            canvas.save()
-            canvas.clipPath(bubbleClip)
-            IslandModes.drawBubble(
-                canvas, second.id, second.accent, second.progress, bubble, rig.now, 255,
-                art = if (second.id == "now-playing") mediaTrack?.art else null,
-                mark = second.glyph,
-                playing = second.id == "now-playing" && (mediaTrack?.playing == true || (mediaTrack == null && second.value == "Playing")),
-            )
-            canvas.restore()
-        }
-        val enter = (rig.enterAlpha() * 255).toInt()
-        val opened = faces[rig.shownId()]
-        if (opened != null && enter > 2) {
-            val rest = rig.restingExpanded()
-            val clip = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
-            canvas.save()
-            canvas.clipPath(clip)
-            canvas.clipPath(continuousRect(rest, min(47.9, min(rest.width, rest.height) / 2), 0.72))
-            paintFace(canvas, opened, Kind.EXPANDED, rest, enter, clip = false)
-            canvas.restore()
-        }
-    }
-
     private fun drawContent(canvas: Canvas, pill: DRect, bubble: DRect?) {
         val look = rig.look()
         val faceId = when (look) {
@@ -580,11 +562,16 @@ class IslandPillView(context: Context) : View(context) {
         val reveal = reveal()
         if (reveal <= 0f) return
         val alpha = (reveal * 255).toInt()
+        // Labels stay on the resting leading edge. The live width only clips them.
+        val layout = if (look == Kind.EXPANDED) rig.restingExpanded() else pill
         around(canvas, pill, rig.pillScale.pos.toFloat()) {
-            paintFace(canvas, face, look, pill, alpha, clip = true, slots = rig.slotRects())
+            canvas.save()
+            canvas.clipPath(continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72))
+            paintFace(canvas, face, look, layout, alpha, clip = false, slots = rig.slotRects())
+            canvas.restore()
         }
         val second = faces[rig.secondary?.id]
-        if (second != null && bubble != null && look == Kind.MINIMAL && !rig.bubbleContentGone()) {
+        if (second != null && bubble != null && look == Kind.MINIMAL) {
             around(canvas, bubble, rig.bubbleScale.pos.toFloat()) {
                 val bubbleClip = continuousRect(bubble, bubble.height / 2, 0.72)
                 canvas.save()
@@ -595,6 +582,7 @@ class IslandPillView(context: Context) : View(context) {
                     art = if (second.id == "now-playing") mediaTrack?.art else null,
                     mark = second.glyph,
                     playing = bubblePlaying,
+                    icon = second.icon,
                 )
                 canvas.restore()
             }
@@ -943,6 +931,7 @@ class IslandPillView(context: Context) : View(context) {
                 face.glyph, shownElapsed, shownRemaining, look, pill, rig.hole, ears?.first, ears?.second, rig.now, hits, alpha,
                 art = track?.art,
                 playing = musicPlaying,
+                icon = face.icon,
             )
         }
         if (!clip) {
@@ -995,5 +984,6 @@ class IslandPillView(context: Context) : View(context) {
         val priority: Int,
         val group: String?,
         val minimal: Double = 22.0,
+        var icon: android.graphics.Bitmap? = null,
     )
 }

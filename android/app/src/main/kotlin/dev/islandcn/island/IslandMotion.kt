@@ -263,8 +263,9 @@ internal class IslandRig {
      */
     fun look(): Kind {
         if (kind != Kind.EXPANDED) return kind
-        if (height.pos <= 56.0 && bubbleHeight.pos >= 1.0) return Kind.MINIMAL
-        if (height.pos <= 56.0) return Kind.COMPACT
+        // The detached pill stays the split face until it has joined. No second view at the sensor.
+        if (bubbleHeight.pos >= 0.5) return Kind.MINIMAL
+        if (height.pos <= 56.0 && !absorbLive) return Kind.COMPACT
         return Kind.EXPANDED
     }
     val animating: Boolean get() = press != null || sched.isNotEmpty() || tracks().any { it.busy }
@@ -451,7 +452,6 @@ internal class IslandRig {
             if (current.decided && !current.joined && current.target == "bubble" && bubbleHeight.pos >= 0.5) {
                 current.joined = true
                 val joinAt = current.t0 + 0.224
-                bubbleCutAt = joinAt - 0.023
                 val idleRight = shape(Kind.IDLE, Measure()).right
                 val wait = (joinAt - 0.012 - now).coerceAtLeast(0.0)
                 bubbleLeft.aim(idleRight - bubbleHeight.pos, motion(Spring(0.25, 1.0)), now, hold = wait)
@@ -476,6 +476,9 @@ internal class IslandRig {
             for (item in due) item.second()
         }
         for (track in tracks()) track.step(now)
+        if (absorbLive && bubbleHeight.pos >= 0.5 && now >= absorbAt + 0.222 && bubbleLeft.pos >= left.pos - 1.0 && bubbleRight.pos <= right.pos + 1.0) {
+            bubbleHeight.aim(0.0, MotionSpec.tween(0.0), now)
+        }
         if (absorbLive && now > absorbAt + 0.7 && enterAlpha() > 0.98f && !left.busy && !right.busy && !height.busy && !radius.busy) {
             absorbLive = false
             bubbleCutAt = -1.0
@@ -766,8 +769,11 @@ internal class IslandRig {
             }
             bubbleLeft.aim(idle.right - restH, motion(Spring(0.25, 1.0)), now)
             bubbleRight.aim(idle.right, motion(Spring(0.42, 1.0)), now)
+            // The lobe stays drawn until it sits inside the pill (islandcn's step at the turn).
             schedule(now + 0.222) {
-                if (kind == Kind.EXPANDED) bubbleHeight.aim(0.0, MotionSpec.tween(0.0), now)
+                if (kind != Kind.EXPANDED) return@schedule
+                val inside = bubbleLeft.pos >= left.pos - 1.0 && bubbleRight.pos <= right.pos + 1.0
+                if (inside) bubbleHeight.aim(0.0, MotionSpec.tween(0.0), now)
             }
         } else if (transition == Transition.SPLIT) {
             bubbleLeft.aim(target.bubbleLeft, motion(Spring(0.376, 0.811)), now, hold = if (reduced) 0.0 else 0.345)

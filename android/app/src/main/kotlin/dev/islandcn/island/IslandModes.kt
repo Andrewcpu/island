@@ -81,12 +81,13 @@ internal object IslandModes {
         alpha: Int,
         art: Bitmap? = null,
         playing: Boolean = false,
+        icon: Bitmap? = null,
     ) {
         hits.clear()
         if (kind == Kind.EXPANDED) {
-            drawExpanded(canvas, id, titleText, detail, valueText, accent, progress, glyph, elapsed, remaining, pill, hole, now, hits, alpha, art, playing)
+            drawExpanded(canvas, id, titleText, detail, valueText, accent, progress, glyph, elapsed, remaining, pill, hole, now, hits, alpha, art, playing, icon)
         } else {
-            drawCompact(canvas, id, titleText, detail, valueText, trail, accent, progress, leading, trailing, now, alpha, art, playing)
+            drawCompact(canvas, id, titleText, detail, valueText, trail, accent, progress, leading, trailing, now, alpha, art, playing, icon)
         }
     }
 
@@ -96,8 +97,12 @@ internal object IslandModes {
         return (48.0 + (lines - 1) * 18.0).coerceIn(48.0, 140.0)
     }
 
-    fun drawBubble(canvas: Canvas, id: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int, art: Bitmap? = null, mark: String = "", playing: Boolean = false) {
+    fun drawBubble(canvas: Canvas, id: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int, art: Bitmap? = null, mark: String = "", playing: Boolean = false, icon: Bitmap? = null) {
         val lead = DRect(bubble.left + 6.42, bubble.centerY - 11, bubble.left + 28.42, bubble.centerY + 11)
+        if (icon != null) {
+            cover(canvas, icon, lead, 6f, alpha)
+            return
+        }
         when (id) {
             "timer", "timer-done" -> ring(canvas, lead, progress.coerceIn(0f, 1f), accent, tint(accent, 0.25f), 2.4f, alpha)
             "now-playing" -> {
@@ -125,9 +130,17 @@ internal object IslandModes {
         alpha: Int,
         art: Bitmap?,
         playing: Boolean,
+        icon: Bitmap? = null,
     ) {
         val lead = leading ?: return
         val trailRect = trailing
+        if (icon != null) {
+            cover(canvas, icon, lead, 6f, alpha)
+            val caption = trail.ifEmpty { valueText }
+            if (trailRect != null && caption.isNotEmpty()) textIn(canvas, caption, compact, if (id == "timer" || id == "timer-done") accent else Color.WHITE, trailRect, true, alpha)
+            if ((id == "upload" || id == "transfer") && trailRect != null) ring(canvas, trailRect, progress, accent, 0x29FFFFFF, 2.6f, alpha, if (id == "upload") valueText.removeSuffix("%") else null)
+            return
+        }
         when (id) {
             "timer", "timer-done" -> {
                 glyph(canvas, "timer", lead, accent, alpha)
@@ -208,21 +221,22 @@ internal object IslandModes {
         alpha: Int,
         art: Bitmap?,
         playing: Boolean,
+        icon: Bitmap?,
     ) {
         val contentTop = pill.top + 18.18
         val right = pill.right - 17.81
         when (id) {
             "timer", "timer-done" -> timerExpanded(canvas, pill, contentTop, right, titleText, valueText, accent, detail == "Paused", hits, alpha)
             "now-playing" -> playerExpanded(canvas, pill, hole, titleText, detail, accent, playing, progress, elapsed, remaining, now, hits, alpha, art)
-            "call" -> callExpanded(canvas, pill, titleText, detail, valueText, hits, alpha)
+            "call" -> callExpanded(canvas, pill, titleText, detail, valueText, hits, alpha, icon)
             "battery" -> batteryExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
-            "eta" -> etaExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
+            "eta" -> etaExpanded(canvas, pill, titleText, detail, valueText, accent, alpha, icon)
             "recording" -> recordingExpanded(canvas, pill, titleText, valueText, accent, detail != "Paused", hits, now, alpha)
-            "upload", "transfer" -> mediaExpanded(canvas, pill, id, glyph, titleText, detail, valueText, accent, progress, alpha)
-            "message" -> personExpanded(canvas, pill, titleText, detail, alpha)
-            "calendar" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
-            "order-a", "order-b" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
-            else -> personExpanded(canvas, pill, titleText, detail, alpha)
+            "upload", "transfer" -> mediaExpanded(canvas, pill, id, glyph, titleText, detail, valueText, accent, progress, alpha, icon)
+            "message" -> personExpanded(canvas, pill, titleText, detail, alpha, icon)
+            "calendar" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, alpha, icon)
+            "order-a", "order-b" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, alpha, icon)
+            else -> personExpanded(canvas, pill, titleText, detail, alpha, icon)
         }
     }
 
@@ -349,9 +363,9 @@ internal object IslandModes {
         }
     }
 
-    private fun callExpanded(canvas: Canvas, pill: DRect, caller: String, detail: String, valueText: String, hits: Hits, alpha: Int) {
+    private fun callExpanded(canvas: Canvas, pill: DRect, caller: String, detail: String, valueText: String, hits: Hits, alpha: Int, icon: Bitmap?) {
         val avatar = DRect(pill.left + 16.3, pill.top + 16.8, pill.left + 66.3, pill.top + 66.8)
-        avatar(canvas, caller, avatar, alpha)
+        if (icon != null) cover(canvas, icon, avatar, 14f, alpha) else avatar(canvas, caller, avatar, alpha)
         val textLeft = pill.left + 76.5
         val textLimit = pill.right - 130
         label14.color = if (valueText == "Ring") 0x9EEBEBF5.toInt() else 0xFF76FB73.toInt()
@@ -394,9 +408,9 @@ internal object IslandModes {
         batteryIcon(canvas, pill.right - 18.5 - 35.5, mid - 8.3, 35.5, percent, if (charging) 0xFF63FF39.toInt() else accent, charging, alpha)
     }
 
-    private fun etaExpanded(canvas: Canvas, pill: DRect, name: String, plate: String, minutes: String, accent: Int, alpha: Int) {
+    private fun etaExpanded(canvas: Canvas, pill: DRect, name: String, plate: String, minutes: String, accent: Int, alpha: Int, icon: Bitmap?) {
         val glyphBox = DRect(pill.left + 21.5, pill.top + 22, pill.left + 65, pill.top + 64)
-        glyph(canvas, if (accent == 0xFFFFD60A.toInt()) "box" else "car", glyphBox, accent, alpha)
+        if (icon != null) cover(canvas, icon, glyphBox, 12f, alpha) else glyph(canvas, if (accent == 0xFFFFD60A.toInt()) "box" else "car", glyphBox, accent, alpha)
         val right = pill.right - 25.5
         titleRegular.color = Color.WHITE
         titleRegular.alpha = alpha
@@ -449,9 +463,10 @@ internal object IslandModes {
         canvas.drawRoundRect(RectF((hits.stop.centerX - 12.5).toFloat(), (hits.stop.centerY - 12.5).toFloat(), (hits.stop.centerX + 12.5).toFloat(), (hits.stop.centerY + 12.5).toFloat()), 6.5f, 6.5f, fill)
     }
 
-    private fun mediaExpanded(canvas: Canvas, pill: DRect, id: String, glyph: String, titleText: String, detail: String, valueText: String, accent: Int, progress: Float, alpha: Int) {
+    private fun mediaExpanded(canvas: Canvas, pill: DRect, id: String, glyph: String, titleText: String, detail: String, valueText: String, accent: Int, progress: Float, alpha: Int, icon: Bitmap?) {
         val picture = DRect(pill.left + 16.3, pill.top + 16.8, pill.left + 66.3, pill.top + 66.8)
-        if (id == "upload") thumb(canvas, DRect(picture.centerX - 22, picture.centerY - 22, picture.centerX + 22, picture.centerY + 22), accent, alpha)
+        if (icon != null) cover(canvas, icon, picture, 12f, alpha)
+        else if (id == "upload") thumb(canvas, DRect(picture.centerX - 22, picture.centerY - 22, picture.centerX + 22, picture.centerY + 22), accent, alpha)
         else glyph(canvas, "phone", picture, accent, alpha)
         val textLeft = pill.left + 76.5
         val limit = pill.right - 80
@@ -475,9 +490,9 @@ internal object IslandModes {
         ring(canvas, ringBox, progress, accent, 0x29FFFFFF, 4f, alpha, if (id == "upload") valueText.removeSuffix("%") else null)
     }
 
-    private fun personExpanded(canvas: Canvas, pill: DRect, name: String, body: String, alpha: Int) {
+    private fun personExpanded(canvas: Canvas, pill: DRect, name: String, body: String, alpha: Int, icon: Bitmap?) {
         val avatar = DRect(pill.left + 16.3, pill.top + 16.8, pill.left + 66.3, pill.top + 66.8)
-        avatar(canvas, name, avatar, alpha)
+        if (icon != null) cover(canvas, icon, avatar, 14f, alpha) else avatar(canvas, name, avatar, alpha)
         val textLeft = pill.left + 76.5
         val limit = pill.right - 18.5
         title.color = Color.WHITE
@@ -494,12 +509,12 @@ internal object IslandModes {
         }
     }
 
-    private fun eventExpanded(canvas: Canvas, pill: DRect, name: String, detail: String, valueText: String, accent: Int, alpha: Int) {
+    private fun eventExpanded(canvas: Canvas, pill: DRect, name: String, detail: String, valueText: String, accent: Int, alpha: Int, icon: Bitmap?) {
         val tile = DRect(pill.left + 18.5, pill.top + 18.18, pill.left + 70.5, pill.top + 70.18)
         fill.color = tint(accent, 0.2f)
         fill.alpha = alpha
         canvas.drawRoundRect(tile.toRect(), 12f, 12f, fill)
-        glyph(canvas, if (name.startsWith("Order")) "box" else "event", tile, accent, alpha)
+        if (icon != null) cover(canvas, icon, tile, 12f, alpha) else glyph(canvas, if (name.startsWith("Order")) "box" else "event", tile, accent, alpha)
         val textLeft = tile.right + 12
         val limit = pill.right - 90
         title.color = Color.WHITE

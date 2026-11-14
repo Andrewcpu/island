@@ -239,10 +239,14 @@ class IslandOverlayService : Service() {
         private var latestProgress: ProgressSnap? = null
         private var latestRide: RideSnap? = null
         private var latestStatus: Pair<String, String>? = null
+        private var latestCallIcon: android.graphics.Bitmap? = null
+        private var latestMissedIcon: android.graphics.Bitmap? = null
+        private var latestMessageIcon: android.graphics.Bitmap? = null
+        private var latestStatusIcon: android.graphics.Bitmap? = null
 
-        private data class TimerSnap(val remainingMs: Long, val paused: Boolean, val label: String)
-        private data class ProgressSnap(val title: String, val detail: String, val fraction: Float, val label: String)
-        private data class RideSnap(val title: String, val detail: String, val value: String, val delivery: Boolean)
+        private data class TimerSnap(val remainingMs: Long, val paused: Boolean, val label: String, val icon: android.graphics.Bitmap? = null)
+        private data class ProgressSnap(val title: String, val detail: String, val fraction: Float, val label: String, val icon: android.graphics.Bitmap? = null)
+        private data class RideSnap(val title: String, val detail: String, val value: String, val delivery: Boolean, val icon: android.graphics.Bitmap? = null)
 
         @Volatile var instance: IslandOverlayService? = null
         @Volatile var useMic: Boolean = false
@@ -287,14 +291,16 @@ class IslandOverlayService : Service() {
             deliver(context) { it.onMedia(track) }
         }
 
-        fun onCall(context: Context, state: String, label: String) {
+        fun onCall(context: Context, state: String, label: String, icon: android.graphics.Bitmap? = null) {
             latestCall = state to label
-            deliver(context) { it.onLiveCall(state, label) }
+            latestCallIcon = icon ?: latestCallIcon
+            deliver(context) { it.onLiveCall(state, label, latestCallIcon) }
         }
 
-        fun onMissed(context: Context, name: String) {
+        fun onMissed(context: Context, name: String, icon: android.graphics.Bitmap? = null) {
             latestMissed = name
-            deliver(context) { it.onMissedCall(name) }
+            latestMissedIcon = icon ?: latestMissedIcon
+            deliver(context) { it.onMissedCall(name, latestMissedIcon) }
         }
 
         fun onMissedCleared() {
@@ -302,9 +308,10 @@ class IslandOverlayService : Service() {
             instance?.pill?.onMissedCallCleared()
         }
 
-        fun onMessage(context: Context, sender: String, body: String) {
+        fun onMessage(context: Context, sender: String, body: String, icon: android.graphics.Bitmap? = null) {
             latestMessage = sender to body
-            deliver(context) { it.onLiveMessage(sender, body) }
+            latestMessageIcon = icon ?: latestMessageIcon
+            deliver(context) { it.onLiveMessage(sender, body, latestMessageIcon) }
         }
 
         fun onMessageCleared() {
@@ -312,9 +319,9 @@ class IslandOverlayService : Service() {
             instance?.pill?.onLiveMessageCleared()
         }
 
-        fun onTimer(context: Context, remainingMs: Long, paused: Boolean, label: String) {
-            latestTimer = TimerSnap(remainingMs, paused, label)
-            deliver(context) { it.onLiveTimer(remainingMs, paused, label) }
+        fun onTimer(context: Context, remainingMs: Long, paused: Boolean, label: String, icon: android.graphics.Bitmap? = null) {
+            latestTimer = TimerSnap(remainingMs, paused, label, icon ?: latestTimer?.icon)
+            deliver(context) { it.onLiveTimer(remainingMs, paused, label, latestTimer?.icon) }
         }
 
         fun onTimerCleared() {
@@ -322,9 +329,9 @@ class IslandOverlayService : Service() {
             instance?.pill?.onLiveTimerCleared()
         }
 
-        fun onProgress(context: Context, title: String, detail: String, fraction: Float, label: String) {
-            latestProgress = ProgressSnap(title, detail, fraction, label)
-            deliver(context) { it.onLiveProgress(title, detail, fraction, label) }
+        fun onProgress(context: Context, title: String, detail: String, fraction: Float, label: String, icon: android.graphics.Bitmap? = null) {
+            latestProgress = ProgressSnap(title, detail, fraction, label, icon ?: latestProgress?.icon)
+            deliver(context) { it.onLiveProgress(title, detail, fraction, label, latestProgress?.icon) }
         }
 
         fun onProgressCleared() {
@@ -332,9 +339,9 @@ class IslandOverlayService : Service() {
             instance?.pill?.onLiveProgressCleared()
         }
 
-        fun onRide(context: Context, title: String, detail: String, value: String, delivery: Boolean) {
-            latestRide = RideSnap(title, detail, value, delivery)
-            deliver(context) { it.onLiveRide(title, detail, value, delivery) }
+        fun onRide(context: Context, title: String, detail: String, value: String, delivery: Boolean, icon: android.graphics.Bitmap? = null) {
+            latestRide = RideSnap(title, detail, value, delivery, icon ?: latestRide?.icon)
+            deliver(context) { it.onLiveRide(title, detail, value, delivery, latestRide?.icon) }
         }
 
         fun onRideCleared() {
@@ -342,9 +349,10 @@ class IslandOverlayService : Service() {
             instance?.pill?.onLiveRideCleared()
         }
 
-        fun onStatus(context: Context, title: String, detail: String) {
+        fun onStatus(context: Context, title: String, detail: String, icon: android.graphics.Bitmap? = null) {
             latestStatus = title to detail
-            deliver(context) { it.onLiveStatus(title, detail) }
+            latestStatusIcon = icon ?: latestStatusIcon
+            deliver(context) { it.onLiveStatus(title, detail, latestStatusIcon) }
         }
 
         fun onStatusCleared() {
@@ -364,13 +372,13 @@ class IslandOverlayService : Service() {
 
         private fun applyLive(view: IslandPillView) {
             if (mediaKnown) view.onMedia(latestMedia)
-            latestMissed?.let { view.onMissedCall(it) }
-            latestCall?.let { view.onLiveCall(it.first, it.second) }
-            latestMessage?.let { view.onLiveMessage(it.first, it.second) }
-            latestTimer?.let { view.onLiveTimer(it.remainingMs, it.paused, it.label) }
-            latestProgress?.let { view.onLiveProgress(it.title, it.detail, it.fraction, it.label) }
-            latestRide?.let { view.onLiveRide(it.title, it.detail, it.value, it.delivery) }
-            latestStatus?.let { view.onLiveStatus(it.first, it.second) }
+            latestMissed?.let { view.onMissedCall(it, latestMissedIcon) }
+            latestCall?.let { view.onLiveCall(it.first, it.second, latestCallIcon) }
+            latestMessage?.let { view.onLiveMessage(it.first, it.second, latestMessageIcon) }
+            latestTimer?.let { view.onLiveTimer(it.remainingMs, it.paused, it.label, it.icon) }
+            latestProgress?.let { view.onLiveProgress(it.title, it.detail, it.fraction, it.label, it.icon) }
+            latestRide?.let { view.onLiveRide(it.title, it.detail, it.value, it.delivery, it.icon) }
+            latestStatus?.let { view.onLiveStatus(it.first, it.second, latestStatusIcon) }
         }
 
         fun dispatch(context: Context, name: String, args: Map<String, Any?>) {

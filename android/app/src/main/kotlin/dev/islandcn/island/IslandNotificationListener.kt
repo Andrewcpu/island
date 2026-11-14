@@ -2,6 +2,8 @@ package dev.islandcn.island
 
 import android.app.Notification
 import android.app.Person
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSession
@@ -67,6 +69,7 @@ class IslandNotificationListener : NotificationListenerService() {
             releaseCall(key)
             publishChanged(drop(key, keep = "missed"))
             missed[key] = callerName(notification) ?: "Unknown"
+            rememberIcon(key, notification)
             publishMissed()
             return
         }
@@ -77,7 +80,7 @@ class IslandNotificationListener : NotificationListenerService() {
             val state = if (type == 2) "offhook" else "ringing"
             val name = callerName(notification).orEmpty()
             callerName(notification)?.let { IslandMonitors.noteCaller(this, it, state == "offhook") }
-            IslandOverlayService.onCall(this, state, name)
+            IslandOverlayService.onCall(this, state, name, notificationIcon(notification))
             return
         }
         releaseCall(key)
@@ -88,6 +91,7 @@ class IslandNotificationListener : NotificationListenerService() {
             val title = notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
             val label = if (title.isEmpty() || durationText(title)) "Timer" else title
             val paused = remaining.second
+            rememberIcon(key, notification)
             timers[key] = TimerNote(
                 endsAt = if (paused) 0L else SystemClock.elapsedRealtime() + remaining.first,
                 frozen = if (paused) remaining.first else null,
@@ -101,6 +105,7 @@ class IslandNotificationListener : NotificationListenerService() {
         if (message != null) {
             publishChanged(drop(key, keep = "message"))
             messages[key] = message
+            rememberIcon(key, notification)
             publishMessage()
             return
         }
@@ -108,6 +113,7 @@ class IslandNotificationListener : NotificationListenerService() {
         if (progress != null) {
             publishChanged(drop(key, keep = "progress"))
             progressNotes[key] = progress
+            rememberIcon(key, notification)
             publishProgress()
             return
         }
@@ -115,6 +121,7 @@ class IslandNotificationListener : NotificationListenerService() {
         if (ride != null) {
             publishChanged(drop(key, keep = "ride"))
             rides[key] = ride
+            rememberIcon(key, notification)
             publishRide()
             return
         }
@@ -127,6 +134,7 @@ class IslandNotificationListener : NotificationListenerService() {
             }
             publishChanged(drop(key, keep = "status"))
             statuses[key] = title to detail
+            rememberIcon(key, notification)
             publishStatus()
             return
         }
@@ -141,6 +149,7 @@ class IslandNotificationListener : NotificationListenerService() {
         if (keep != "progress" && progressNotes.remove(key) != null) changed.add("progress")
         if (keep != "ride" && rides.remove(key) != null) changed.add("ride")
         if (keep != "status" && statuses.remove(key) != null) changed.add("status")
+        if (changed.isNotEmpty()) icons.remove(key)
         return changed
     }
 
@@ -158,37 +167,55 @@ class IslandNotificationListener : NotificationListenerService() {
         if ("status" in changed) publishStatus()
     }
 
+    private val icons = HashMap<String, Bitmap>()
+
+    private fun rememberIcon(key: String, notification: Notification) {
+        notificationIcon(notification)?.let { icons[key] = it }
+    }
+
+    /** The notification's large icon when it has one, otherwise its small icon. */
+    private fun notificationIcon(notification: Notification): Bitmap? {
+        val icon = notification.getLargeIcon() ?: notification.smallIcon ?: return null
+        val drawable = icon.loadDrawable(this) ?: return null
+        val size = (resources.displayMetrics.density * 48f).toInt().coerceIn(32, 192)
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawable.setBounds(0, 0, size, size)
+        drawable.draw(canvas)
+        return bitmap
+    }
+
     private fun publishProgress() {
-        val note = progressNotes.values.lastOrNull()
+        val note = progressNotes.entries.lastOrNull()
         if (note == null) IslandOverlayService.onProgressCleared()
-        else IslandOverlayService.onProgress(this, note.title, note.detail, note.fraction, note.label)
+        else IslandOverlayService.onProgress(this, note.value.title, note.value.detail, note.value.fraction, note.value.label, icons[note.key])
     }
 
     private fun publishRide() {
-        val note = rides.values.lastOrNull()
+        val note = rides.entries.lastOrNull()
         if (note == null) IslandOverlayService.onRideCleared()
-        else IslandOverlayService.onRide(this, note.title, note.detail, note.value, note.delivery)
+        else IslandOverlayService.onRide(this, note.value.title, note.value.detail, note.value.value, note.value.delivery, icons[note.key])
     }
 
     private fun publishStatus() {
-        val note = statuses.values.lastOrNull()
+        val note = statuses.entries.lastOrNull()
         if (note == null) IslandOverlayService.onStatusCleared()
-        else IslandOverlayService.onStatus(this, note.first, note.second)
+        else IslandOverlayService.onStatus(this, note.value.first, note.value.second, icons[note.key])
     }
 
     private fun publishMessage() {
-        val latest = messages.values.lastOrNull()
+        val latest = messages.entries.lastOrNull()
         if (latest == null) IslandOverlayService.onMessageCleared()
-        else IslandOverlayService.onMessage(this, latest.first, latest.second)
+        else IslandOverlayService.onMessage(this, latest.value.first, latest.value.second, icons[latest.key])
     }
 
     private fun publishTimer() {
-        val note = timers.values.minByOrNull { if (it.paused) Long.MAX_VALUE - 1 else (it.endsAt - SystemClock.elapsedRealtime()) } ?: run {
+        val note = timers.entries.minByOrNull { if (it.value.paused) Long.MAX_VALUE - 1 else (it.value.endsAt - SystemClock.elapsedRealtime()) } ?: run {
             IslandOverlayService.onTimerCleared()
             return
         }
-        val left = if (note.paused) note.frozen ?: 0L else (note.endsAt - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
-        IslandOverlayService.onTimer(this, left, note.paused, note.label)
+        val left = if (note.value.paused) note.value.frozen ?: 0L else (note.value.endsAt - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+        IslandOverlayService.onTimer(this, left, note.value.paused, note.value.label, icons[note.key])
     }
 
     private fun publishMedia(token: MediaSession.Token) {
@@ -251,9 +278,9 @@ class IslandNotificationListener : NotificationListenerService() {
     }
 
     private fun publishMissed() {
-        val name = missed.values.lastOrNull()
+        val name = missed.entries.lastOrNull()
         if (name == null) IslandOverlayService.onMissedCleared()
-        else IslandOverlayService.onMissed(this, name)
+        else IslandOverlayService.onMissed(this, name.value, icons[name.key])
     }
 
     private fun isMissedCall(notification: Notification): Boolean {
