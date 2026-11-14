@@ -258,14 +258,18 @@ internal class IslandRig {
     val expanded: Boolean get() = kind == Kind.EXPANDED
 
     /**
-     * What to draw while a split expands. The big pill keeps its compact size until the
-     * absorb springs have eased it in, so the layout does not snap to the expanded card.
+     * The expanded card is what's on screen once its body has opened. Until then a split
+     * keeps the compact face so the layout does not snap at the start of the spring.
      */
+    fun expandedOpen(): Boolean = kind == Kind.EXPANDED && ::height.isInitialized && height.pos > 56.0
+
     fun look(): Kind {
         if (kind != Kind.EXPANDED) return kind
-        // The detached pill stays the split face until it has joined. No second view at the sensor.
+        // A leftover split pill must not keep the compact face inside the opened card.
+        // That is what left the expanded body blank with the other icon on the camera.
+        if (expandedOpen()) return Kind.EXPANDED
         if (bubbleHeight.pos >= 0.5) return Kind.MINIMAL
-        if (height.pos <= 56.0 && !absorbLive) return Kind.COMPACT
+        if (!absorbLive) return Kind.COMPACT
         return Kind.EXPANDED
     }
     val animating: Boolean get() = press != null || sched.isNotEmpty() || tracks().any { it.busy }

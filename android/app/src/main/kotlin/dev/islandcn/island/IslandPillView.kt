@@ -5,6 +5,9 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.SystemClock
 import android.provider.Settings
@@ -76,6 +79,10 @@ class IslandPillView(context: Context) : View(context) {
     private val choreographer = Choreographer.getInstance()
 
     private val black = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+    private val mask = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK
+        xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+    }
     private val keyline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 1.5f
@@ -526,7 +533,9 @@ class IslandPillView(context: Context) : View(context) {
         val expand = ((pill.height - 36.85) / (84.0 - 36.85)).coerceIn(0.0, 1.0)
         canvas.drawPath(continuousRect(rig.sensor, rig.sensor.height / 2, 0.72), black)
         val shell = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
-        val bubble = rig.bubble
+        // Once this side has opened, the other compact pill is not drawn on the card.
+        // It comes back when the body collapses and expandedOpen() is false again.
+        val bubble = if (rig.expandedOpen()) null else rig.bubble
         around(canvas, pill, rig.pillScale.pos.toFloat()) {
             if (expand > 0.02) {
                 shadow.alpha = (90 * expand).toInt()
@@ -560,6 +569,20 @@ class IslandPillView(context: Context) : View(context) {
         canvas.restore()
     }
 
+    /** Keep [draw] inside [path]. clipPath was dropping the opened card's body. */
+    private fun drawInside(canvas: Canvas, path: Path, draw: () -> Unit) {
+        val bounds = RectF()
+        path.computeBounds(bounds, true)
+        if (bounds.width() < 1f || bounds.height() < 1f) {
+            draw()
+            return
+        }
+        val layer = canvas.saveLayer(bounds, null)
+        draw()
+        canvas.drawPath(path, mask)
+        canvas.restoreToCount(layer)
+    }
+
     private fun around(canvas: Canvas, rect: DRect, scale: Float, draw: () -> Unit) {
         if (scale == 1f) {
             draw()
@@ -586,26 +609,25 @@ class IslandPillView(context: Context) : View(context) {
         if (reveal <= 0f) return
         val alpha = (reveal * 255).toInt()
         around(canvas, pill, rig.pillScale.pos.toFloat()) {
-            canvas.save()
-            canvas.clipPath(continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72))
-            paintFace(canvas, face, look, pill, alpha, clip = false, slots = rig.slotRects())
-            canvas.restore()
+            // clipPath on the opened card was discarding this draw after the window
+            // stayed centered. Mask with the same path the shell fills, so the body paints.
+            drawInside(canvas, continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)) {
+                paintFace(canvas, face, look, pill, alpha, clip = false, slots = rig.slotRects())
+            }
         }
         val second = faces[rig.secondary?.id]
         if (second != null && bubble != null && look == Kind.MINIMAL) {
             around(canvas, bubble, rig.bubbleScale.pos.toFloat()) {
-                val bubbleClip = continuousRect(bubble, bubble.height / 2, 0.72)
-                canvas.save()
-                canvas.clipPath(bubbleClip)
                 val bubblePlaying = second.id == "now-playing" && (mediaTrack?.playing == true || (mediaTrack == null && second.value == "Playing"))
-                IslandModes.drawBubble(
-                    canvas, second.id, second.accent, second.progress, bubble, rig.now, alpha,
-                    art = if (second.id == "now-playing") mediaTrack?.art else null,
-                    mark = second.glyph,
-                    playing = bubblePlaying,
-                    icon = second.icon,
-                )
-                canvas.restore()
+                drawInside(canvas, continuousRect(bubble, bubble.height / 2, 0.72)) {
+                    IslandModes.drawBubble(
+                        canvas, second.id, second.accent, second.progress, bubble, rig.now, alpha,
+                        art = if (second.id == "now-playing") mediaTrack?.art else null,
+                        mark = second.glyph,
+                        playing = bubblePlaying,
+                        icon = second.icon,
+                    )
+                }
             }
         }
     }
@@ -1046,10 +1068,7 @@ class IslandPillView(context: Context) : View(context) {
             draw()
             return
         }
-        canvas.save()
-        canvas.clipPath(continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72))
-        draw()
-        canvas.restore()
+        drawInside(canvas, continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72), draw)
     }
 
     private fun ticking(): Boolean = faces.keys.any { it == "timer" || it == "timer-done" || it == "recording" || it == "call" || it == "upload" || it == "transfer" || it == "now-playing" || it == "live" }
