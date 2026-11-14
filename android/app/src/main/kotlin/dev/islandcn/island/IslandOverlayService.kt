@@ -147,6 +147,8 @@ class IslandOverlayService : Service() {
         val nextH = height.coerceAtLeast(1)
         val nextX = left
         val nextY = top - shiftY
+        // Never park the island at the origin. A settle frame must keep the camera rect.
+        if (nextX == 0 && nextY == 0 && appliedX != Int.MIN_VALUE && (appliedX != 0 || appliedY != 0)) return
         if (appliedX == nextX && appliedY == nextY && appliedW == nextW && appliedH == nextH) return
         params.x = nextX
         params.y = nextY

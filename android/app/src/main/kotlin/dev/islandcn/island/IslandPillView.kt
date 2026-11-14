@@ -917,15 +917,28 @@ class IslandPillView(context: Context) : View(context) {
     /** Held for a whole spring so the window does not follow subpixel edges. */
     private var latch: DRect? = null
     private val screenLoc = IntArray(2)
+    /** Last screen position that matched the window we asked for. A 0,0 layout pass must not replace it. */
+    private var confirmedX = Int.MIN_VALUE
+    private var confirmedY = Int.MIN_VALUE
 
-    /** Where the view actually is. Falls back to the requested origin before the first layout. */
+    /**
+     * Draw and hit-test from the camera window, not from a layout pass that
+     * reports 0,0 while a resize is in flight.
+     */
     private fun screenOrigin(): FloatArray {
-        if (!isAttachedToWindow) return floatArrayOf(originX.toFloat(), originY.toFloat())
+        val requestedX = originX.toFloat()
+        val requestedY = originY.toFloat()
+        if (!isAttachedToWindow) return floatArrayOf(requestedX, requestedY)
         getLocationOnScreen(screenLoc)
-        if (screenLoc[0] == 0 && screenLoc[1] == 0 && (originX != 0 || originY != 0)) {
-            return floatArrayOf(originX.toFloat(), originY.toFloat())
+        val sx = screenLoc[0]
+        val sy = screenLoc[1]
+        val zeroed = sx == 0 && sy == 0 && (originX != 0 || originY != 0)
+        if (!zeroed && abs(sx - originX) <= 4 && abs(sy - originY) <= 4) {
+            confirmedX = sx
+            confirmedY = sy
         }
-        return floatArrayOf(screenLoc[0].toFloat(), screenLoc[1].toFloat())
+        if (confirmedX == Int.MIN_VALUE) return floatArrayOf(requestedX, requestedY)
+        return floatArrayOf(confirmedX.toFloat(), confirmedY.toFloat())
     }
 
     private fun publish() {
@@ -964,6 +977,12 @@ class IslandPillView(context: Context) : View(context) {
             left = camX - halfW
             width = halfW * 2
         }
+        val camX = Math.round(rig.centerX * density).toInt()
+        val centered = abs(rightExtent - leftExtent) <= 1.0
+        val zeroed = left == 0 && top == 0
+        val offCamera = centered && abs(left + width / 2 - camX) > 2
+        // A zeroed layout pass is not a window position. Keep the camera rect.
+        if (camX > 8 && (zeroed || offCamera) && appliedL != Int.MIN_VALUE) return
         originX = left
         originY = top
         if (left == appliedL && top == appliedT && width == appliedW && height == appliedH) return
