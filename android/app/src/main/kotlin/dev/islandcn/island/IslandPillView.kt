@@ -13,6 +13,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
@@ -170,7 +171,7 @@ class IslandPillView(context: Context) : View(context) {
             existing.icon = icon ?: existing.icon
             return
         }
-        present(face("call", "missed", "", "", title, "Missed call", "Missed", Color.WHITE, -1f, 48.0, 90).also { it.icon = icon }, alert = existing == null)
+        present(face("call", "missed", "", "", title, "Missed call", "Missed", Color.WHITE, -1f, 80.0, 90).also { it.icon = icon }, alert = existing == null)
     }
 
     fun onLiveMessage(sender: String, body: String, icon: android.graphics.Bitmap? = null) {
@@ -270,15 +271,14 @@ class IslandPillView(context: Context) : View(context) {
 
     fun onLiveStatus(title: String, detail: String, icon: android.graphics.Bitmap? = null) {
         liveStatus = true
-        val name = title.trim()
-        val text = detail.trim()
-        if (name.isEmpty() && text.isEmpty()) return
+        val label = shortLabel(title, detail)
+        if (label.isEmpty()) return
         val existing = faces["live"]
-        if (existing != null && existing.title == name && existing.detail == text) {
+        if (existing != null && existing.title == label && existing.detail.isEmpty()) {
             existing.icon = icon ?: existing.icon
             return
         }
-        present(face("live", "screen", "", text, name, text, "", Color.WHITE, -1f, 48.0, 15).also { it.icon = icon })
+        present(face("live", "screen", "", label, label, "", "", Color.WHITE, -1f, 48.0, 15).also { it.icon = icon })
     }
 
     fun onLiveStatusCleared() {
@@ -306,7 +306,7 @@ class IslandPillView(context: Context) : View(context) {
         if (sample == "call") sample = null
         val incoming = label.trim()
         if (incoming.isNotEmpty()) callerLabel = incoming
-        val title = callerLabel
+        val title = callerLabel.ifBlank { "Incoming call" }
         val existing = faces["call"]
         if (ringing) {
             callFrom = 0L
@@ -320,7 +320,7 @@ class IslandPillView(context: Context) : View(context) {
                 kick()
                 return
             }
-            present(face("call", "phone", "", "Ring", title, "Audio call", "Ring", 0xFF31D259.toInt(), -1f, 48.0, 100).also { it.icon = callIcon }, alert = true)
+            present(face("call", "phone", "", "Ring", title, "Audio call", "Ring", 0xFF31D259.toInt(), -1f, 80.0, 100).also { it.icon = callIcon }, alert = true)
             return
         }
         if (existing != null && existing.value != "Ring") {
@@ -331,7 +331,7 @@ class IslandPillView(context: Context) : View(context) {
         }
         if (callFrom == 0L) callFrom = SystemClock.elapsedRealtime()
         val elapsed = clock(SystemClock.elapsedRealtime() - callFrom)
-        present(face("call", "phone", "", elapsed, title, "On the call", elapsed, 0xFF76FB73.toInt(), -1f, 48.0, 100).also { it.icon = callIcon })
+        present(face("call", "phone", "", elapsed, title, "On the call", elapsed, 0xFF76FB73.toInt(), -1f, 80.0, 100).also { it.icon = callIcon })
     }
 
     fun command(name: String, args: Map<String, Any?>) {
@@ -366,7 +366,7 @@ class IslandPillView(context: Context) : View(context) {
             "incomingCall" -> toggle("call") {
                 val caller = args["caller"]?.toString()?.ifBlank { null } ?: "Mochi"
                 callFrom = 0L
-                present(face("call", "phone", "", "Ring", caller, "Audio call", "Ring", 0xFF31D259.toInt(), -1f, 48.0, 100), alert = true)
+                present(face("call", "phone", "", "Ring", caller, "Audio call", "Ring", 0xFF31D259.toInt(), -1f, 80.0, 100), alert = true)
             }
             "acceptCall" -> if (faces.containsKey("call")) accept()
             "endCall" -> if (sample == "call") dismissPreview() else if (liveCall) IslandMonitors.endCall(context)
@@ -464,8 +464,16 @@ class IslandPillView(context: Context) : View(context) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 val bubble = rig.bubble
-                val target = if (bubble != null && contains(bubble, x, y)) "bubble" else "pill"
-                rig.pointerDown(target)
+                val onBubble = bubble != null && contains(bubble, x, y)
+                val onPill = contains(rig.pill, x, y)
+                if (!onBubble && !onPill) {
+                    if (rig.expanded) {
+                        rig.collapse()
+                        kick()
+                    }
+                    return true
+                }
+                rig.pointerDown(if (onBubble) "bubble" else "pill")
                 kick()
                 return true
             }
@@ -561,12 +569,10 @@ class IslandPillView(context: Context) : View(context) {
         val reveal = reveal()
         if (reveal <= 0f) return
         val alpha = (reveal * 255).toInt()
-        // Labels stay on the resting leading edge. The live width only clips them.
-        val layout = if (look == Kind.EXPANDED) rig.restingExpanded() else pill
         around(canvas, pill, rig.pillScale.pos.toFloat()) {
             canvas.save()
             canvas.clipPath(continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72))
-            paintFace(canvas, face, look, layout, alpha, clip = false, slots = rig.slotRects())
+            paintFace(canvas, face, look, pill, alpha, clip = false, slots = rig.slotRects())
             canvas.restore()
         }
         val second = faces[rig.secondary?.id]
@@ -873,20 +879,17 @@ class IslandPillView(context: Context) : View(context) {
             revealKind = rig.kind
             if (!absorb) revealAt = rig.now
         }
-        // The window is the resting island, centered on the camera in whole pixels.
-        // The spring draws inside it. Rebuilding the window from the live edges made
-        // the center step by a pixel whenever one side crossed a pixel boundary.
-        val union = rig.restUnion()
-        val camX = Math.round(rig.sensor.centerX * density).toInt()
-        val camY = Math.round(rig.sensor.centerY * density).toInt()
-        val halfW = ceil(max((camX - union.left * density), (union.right * density - camX))).toInt().coerceAtLeast(1)
-        val halfH = ceil(max((camY - union.top * density), (union.bottom * density - camY))).toInt().coerceAtLeast(1)
-        val left = camX - halfW
-        val top = camY - halfH
+        // One window, placed once around the camera. Expand and collapse draw inside
+        // it, so the origin never follows the spring and the card is not clipped.
+        val box = rig.stage()
+        val left = floor(box.left * density).toInt()
+        val top = floor(box.top * density).toInt()
+        val right = ceil(box.right * density).toInt()
+        val bottom = ceil(box.bottom * density).toInt()
         originX = left
         originY = top
-        val width = halfW * 2
-        val height = halfH * 2
+        val width = (right - left).coerceAtLeast(1)
+        val height = (bottom - top).coerceAtLeast(1)
         if (left == appliedL && top == appliedT && width == appliedW && height == appliedH) return
         appliedL = left
         appliedT = top
@@ -958,6 +961,16 @@ class IslandPillView(context: Context) : View(context) {
 
     private fun face(id: String, glyph: String, lead: String, trail: String, title: String, detail: String, value: String, accent: Int, progress: Float, body: Double, priority: Int, group: String? = null) =
         Face(id, glyph, lead, trail, title, detail, value, accent, progress, body, priority, group)
+
+    /** Icon plus a few words. A generic live notification does not carry its whole title. */
+    private fun shortLabel(title: String, detail: String): String {
+        val source = title.trim().lineSequence().firstOrNull().orEmpty().ifBlank { detail.trim() }
+        val clean = source.replace(Regex("\\s+"), " ").trim()
+        if (clean.length <= 18) return clean
+        val cut = clean.take(18)
+        val space = cut.lastIndexOf(' ')
+        return if (space >= 6) cut.substring(0, space) else cut
+    }
 
     private fun clock(ms: Long): String {
         val total = (ms / 1000L).toInt()

@@ -273,6 +273,17 @@ internal class IslandRig {
     val pill: DRect
         get() = DRect(centerX + left.pos, top.pos, centerX + right.pos, top.pos + height.pos)
 
+    /**
+     * One drawing stage for every kind. It covers the expanded island, the split
+     * bubble, and the press shadow, and it does not follow the spring.
+     */
+    fun stage(): DRect {
+        val half = (min(screenWidth, 402.0) - 2 * 13.83) / 2
+        val pad = 40.0
+        val topEdge = min(expandedTop, topInset)
+        return DRect(centerX - half - pad, topEdge - pad, centerX + half + pad, topEdge + 180.0 + pad + 16.0)
+    }
+
     /** Resting pill and bubble, padded. Stable while a spring is running. */
     fun restUnion(): DRect {
         if (!::left.isInitialized) return pill.inflate(18.0)

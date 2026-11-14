@@ -364,31 +364,35 @@ internal object IslandModes {
     }
 
     private fun callExpanded(canvas: Canvas, pill: DRect, caller: String, detail: String, valueText: String, hits: Hits, alpha: Int, icon: Bitmap?) {
+        val name = caller.ifBlank { "Incoming call" }
         val avatar = DRect(pill.left + 16.3, pill.top + 16.8, pill.left + 66.3, pill.top + 66.8)
-        if (icon != null) cover(canvas, icon, avatar, 14f, alpha) else avatar(canvas, caller, avatar, alpha)
-        val textLeft = pill.left + 76.5
-        val textLimit = pill.right - 130
-        label14.color = if (valueText == "Ring") 0x9EEBEBF5.toInt() else 0xFF76FB73.toInt()
-        label14.alpha = alpha
-        val line = if (valueText == "Ring") detail else valueText
-        canvas.drawText(ellipsize(line, label14, textLimit - textLeft), textLeft.toFloat(), (pill.top + 47.7).toFloat(), label14)
-        title.color = Color.WHITE
-        title.alpha = alpha
-        canvas.drawText(ellipsize(caller, title, textLimit - textLeft), textLeft.toFloat(), (pill.top + 66.2).toFloat(), title)
+        if (icon != null) cover(canvas, icon, avatar, 14f, alpha) else avatar(canvas, name, avatar, alpha)
         val cy = pill.top + 41.8
+        val edge = 16.1
+        val button = 50.0
         if (valueText == "Ring") {
-            hits.accept = DRect(pill.right - 16.1 - 50, cy - 25, pill.right - 16.1, cy + 25)
-            hits.decline = DRect(hits.accept.left - 10.5 - 50, cy - 25, hits.accept.left - 10.5, cy + 25)
+            hits.accept = DRect(pill.right - edge - button, cy - 25, pill.right - edge, cy + 25)
+            hits.decline = DRect(hits.accept.left - 10.5 - button, cy - 25, hits.accept.left - 10.5, cy + 25)
             circle(canvas, hits.decline, 0xFFFE4345.toInt(), alpha)
             circle(canvas, hits.accept, 0xFF31D259.toInt(), alpha)
             glyph(canvas, "hangup", hits.decline, Color.WHITE, alpha)
             glyph(canvas, "phone", hits.accept, Color.WHITE, alpha)
         } else {
-            hits.decline = DRect(pill.right - 16.1 - 50, cy - 25, pill.right - 16.1, cy + 25)
+            hits.decline = DRect(pill.right - edge - button, cy - 25, pill.right - edge, cy + 25)
             circle(canvas, hits.decline, 0xFFFE4345.toInt(), alpha)
             glyph(canvas, "hangup", hits.decline, Color.WHITE, alpha)
             meter(canvas, DRect(hits.decline.left - 48, cy - 9, hits.decline.left - 8, cy + 9), 0xFF76FB73.toInt(), 8, 2.25f, 1.13f, 0.0, alpha, true, twoTone = true)
         }
+        val textLeft = pill.left + 76.5
+        val block = if (valueText == "Ring") hits.decline.left else hits.decline.left - 48.0
+        val textLimit = max(block - 12.0, textLeft + 72.0)
+        label14.color = if (valueText == "Ring") 0x9EEBEBF5.toInt() else 0xFF76FB73.toInt()
+        label14.alpha = alpha
+        val line = if (valueText == "Ring") detail.ifBlank { "Audio call" } else valueText
+        canvas.drawText(ellipsize(line, label14, textLimit - textLeft), textLeft.toFloat(), (pill.top + 47.7).toFloat(), label14)
+        title.color = Color.WHITE
+        title.alpha = alpha
+        canvas.drawText(ellipsize(name, title, textLimit - textLeft), textLeft.toFloat(), (pill.top + 66.2).toFloat(), title)
     }
 
     private fun batteryExpanded(canvas: Canvas, pill: DRect, label: String, detail: String, percent: String, accent: Int, alpha: Int) {

@@ -179,8 +179,7 @@ class IslandNotificationListener : NotificationListenerService() {
         val notification = sbn.notification
         val small = notification.smallIcon?.loadDrawable(this)?.mutate()
         if (small != null) {
-            val tint = notification.color.takeIf { it != 0 } ?: Color.WHITE
-            small.setTint(tint)
+            small.setTint(lightTint(notification.color))
             return bitmapOf(small)
         }
         val app = try {
@@ -189,6 +188,13 @@ class IslandNotificationListener : NotificationListenerService() {
             null
         } ?: return null
         return bitmapOf(app)
+    }
+
+    /** A dark notification color disappears on the black island. Keep a light tint, or white. */
+    private fun lightTint(color: Int): Int {
+        if (color == 0) return Color.WHITE
+        val luma = 0.2126 * Color.red(color) + 0.7152 * Color.green(color) + 0.0722 * Color.blue(color)
+        return if (luma >= 180.0) color else Color.WHITE
     }
 
     private fun bitmapOf(drawable: android.graphics.drawable.Drawable): Bitmap {
