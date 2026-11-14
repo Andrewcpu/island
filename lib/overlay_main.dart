@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -15,16 +17,32 @@ Future<void> overlayMain() async {
   WidgetsFlutterBinding.ensureInitialized();
   final platform = IslandPlatform();
   final controller = IslandController(platform: platform);
-  await controller.init();
-  final display = await platform.display();
-  if (display.size.width > 0 && display.size.height > 0) {
-    controller.engine.bindHole(placeHole(display.size, display.cutouts));
-    controller.deviceHoles = display.cutouts;
-  }
+  // Accept commands before init. A chip tapped while preferences or the
+  // display query is still running must still reach this isolate.
   _commands.setMethodCallHandler((call) => _handle(controller, platform, call));
-  final frame = await platform.overlayFrame();
   await platform.overlayReady();
-  runApp(OverlayApp(controller: controller, screen: display.size, initialWindow: frame));
+  var screen = Size.zero;
+  try {
+    await controller.init();
+    final display = await platform.display();
+    screen = display.size;
+    if (display.size.width > 0 && display.size.height > 0) {
+      controller.engine.bindHole(placeHole(display.size, display.cutouts));
+      controller.deviceHoles = display.cutouts;
+    }
+  } catch (error, stack) {
+    debugPrint('Island overlay init failed: $error\n$stack');
+  }
+  final frame = await platform.overlayFrame();
+  runApp(OverlayApp(controller: controller, screen: screen, initialWindow: frame));
+  // A background engine's first lifecycle message is sent before Dart listens,
+  // and the embedding will not send it again. Frames then stay off, so setState
+  // never paints and the hold ticker never reaches 0.22s. Pump frames ourselves.
+  Timer.periodic(const Duration(milliseconds: 16), (_) {
+    final binding = WidgetsBinding.instance;
+    if (binding.framesEnabled) return;
+    binding.scheduleForcedFrame();
+  });
 }
 
 Future<void> _handle(IslandController controller, IslandPlatform platform, MethodCall call) async {
@@ -32,50 +50,71 @@ Future<void> _handle(IslandController controller, IslandPlatform platform, Metho
   switch (call.method) {
     case 'outside':
       if (controller.engine.expanded) controller.engine.collapse();
+      break;
     case 'metrics':
       final display = await platform.display();
       if (display.size.width > 0) controller.engine.bindHole(placeHole(display.size, display.cutouts));
+      break;
     case 'startTimer':
       controller.startTimer();
+      break;
     case 'playSample':
       controller.playSample();
+      break;
     case 'incomingCall':
       controller.incomingCall(caller: args['caller']?.toString() ?? 'Mochi');
+      break;
     case 'acceptCall':
       await controller.acceptCall();
+      break;
     case 'endCall':
       await controller.endCall();
+      break;
     case 'startUpload':
       controller.startUpload();
+      break;
     case 'startEta':
       controller.startEta(kind: args['kind']?.toString() ?? 'ride');
+      break;
     case 'startRecording':
       await controller.startRecording(kind: args['kind']?.toString() ?? 'audio');
+      break;
     case 'stopRecording':
       await controller.stopRecording();
+      break;
     case 'toggleRecording':
       controller.toggleRecording();
+      break;
     case 'startTransfer':
       controller.startTransfer(direction: args['direction']?.toString() ?? 'send');
+      break;
     case 'showMessage':
       controller.showMessage(sender: args['sender']?.toString() ?? 'Sam', body: args['body']?.toString() ?? 'The photos are in.');
+      break;
     case 'pinEvent':
       controller.pinNextEvent();
+      break;
     case 'startOrders':
       controller.startOrders();
+      break;
     case 'handoff':
       controller.handoffOrder();
+      break;
     case 'showBattery':
       controller.showBatteryNow();
+      break;
     case 'split':
       controller.startTimer();
       controller.playSample();
+      break;
     case 'setKeyline':
       await controller.setKeyline(args['value'] == true);
+      break;
     case 'setReduced':
       final name = args['value']?.toString() ?? 'system';
       final setting = ReducedMotionSetting.values.where((item) => item.name == name);
       if (setting.isNotEmpty) await controller.setReducedSetting(setting.first);
+      break;
   }
 }
 
@@ -172,6 +211,11 @@ class _OverlayShellState extends State<OverlayShell> {
     if (bubble != null) touches.add(bubble);
     _platform.setFrame(next, touches: touches);
     if (moved && mounted) setState(() {});
+    // setState only schedules a frame when the engine is resumed. A background
+    // overlay starts detached, so force the rebuild that shows the new mode.
+    if (!WidgetsBinding.instance.framesEnabled) {
+      WidgetsBinding.instance.scheduleForcedFrame();
+    }
   }
 
   void _down(Offset local, Rect window) {

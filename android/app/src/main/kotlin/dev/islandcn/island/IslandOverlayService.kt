@@ -13,10 +13,8 @@ import android.accessibilityservice.AccessibilityService
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.RectF
-import android.graphics.Region
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
@@ -104,7 +102,10 @@ class IslandOverlayService : Service() {
     }
 
     private fun present(context: Context, type: Int) {
-        if (root != null && windowType == type && flutterView != null) return
+        if (root != null && windowType == type && flutterView != null) {
+            scheduleNudges()
+            return
+        }
         windowType = type
         hostContext = context
         removeWindow()
@@ -131,7 +132,7 @@ class IslandOverlayService : Service() {
         val created = engine
         if (created != null) {
             placeFlutter()
-            created.lifecycleChannel.appIsResumed()
+            scheduleNudges()
             return
         }
         val loader = FlutterInjector.instance().flutterLoader()
@@ -142,11 +143,13 @@ class IslandOverlayService : Service() {
         IslandBridge.install(fresh, applicationContext, null)
         val channel = MethodChannel(fresh.dartExecutor.binaryMessenger, COMMANDS)
         commands = channel
-        val texture = FlutterTextureView(applicationContext)
+        val texture = FlutterTextureView(hostContext)
         texture.isOpaque = false
-        val flutter = FlutterView(applicationContext, texture)
+        val flutter = FlutterView(hostContext, texture)
         flutter.setBackgroundColor(Color.TRANSPARENT)
         flutter.isClickable = true
+        flutter.isFocusable = true
+        flutter.isFocusableInTouchMode = true
         flutter.layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT,
@@ -155,10 +158,14 @@ class IslandOverlayService : Service() {
         flutterView = flutter
         placeFlutter()
         flutter.attachToFlutterEngine(fresh)
-        fresh.lifecycleChannel.appIsResumed()
         fresh.dartExecutor.executeDartEntrypoint(
             DartExecutor.DartEntrypoint(loader.findAppBundlePath(), "overlayMain"),
         )
+        // The Android shell starts detached. appIsResumed() before Dart subscribes
+        // is dropped, and the channel will not send the same state twice, so the
+        // overlay stays paused: chips change state that never paints, and the hold
+        // ticker never reaches 0.22s. Step through inactive after the isolate is up.
+        scheduleNudges()
         val watcher = object : ComponentCallbacks {
             override fun onConfigurationChanged(newConfig: Configuration) {
                 commands?.invokeMethod("metrics", null)
@@ -172,9 +179,24 @@ class IslandOverlayService : Service() {
         IslandMonitors.watchPhone(this)
     }
 
+    private fun nudgeLifecycle() {
+        val channel = engine?.lifecycleChannel ?: return
+        channel.appIsInactive()
+        channel.aWindowIsFocused()
+        channel.appIsResumed()
+    }
+
+    private fun scheduleNudges() {
+        nudgeLifecycle()
+        val host = root ?: return
+        host.postDelayed({ nudgeLifecycle() }, 150)
+        host.postDelayed({ nudgeLifecycle() }, 700)
+    }
+
     private fun placeFlutter() {
         val host = root ?: return
         val flutter = flutterView ?: return
+        if (host is IslandHost) host.flutterChild = flutter
         if (flutter.parent === host) return
         (flutter.parent as? ViewGroup)?.removeView(flutter)
         host.addView(flutter)
@@ -265,7 +287,6 @@ class IslandOverlayService : Service() {
                 setFitInsetsSides(0)
                 setFitInsetsIgnoringVisibility(true)
             }
-            applyTouchRegion(this, 0, 0, width, height, null)
         }
     }
 
@@ -317,7 +338,6 @@ class IslandOverlayService : Service() {
         private var requestedTop = 0f
         private var requestedWidth = 0f
         private var requestedHeight = 0f
-        private var requestedTouches: List<Map<String, Any?>>? = null
 
         @Volatile var instance: IslandOverlayService? = null
         @Volatile var useMic: Boolean = false
@@ -396,15 +416,13 @@ class IslandOverlayService : Service() {
             requestedTop = top
             requestedWidth = width
             requestedHeight = height
-            if (touches != null) requestedTouches = touches
             val density = service.resources.displayMetrics.density
             val params = (view.layoutParams as? WindowManager.LayoutParams) ?: return
             val nextX = (left * density).toInt()
             val nextY = (top * density).toInt() - service.shiftY
             val nextW = (width * density).toInt().coerceAtLeast(1)
             val nextH = (height * density).toInt().coerceAtLeast(1)
-            service.applyTouchRegion(params, nextX, nextY + service.shiftY, nextW, nextH, requestedTouches)
-            if (service.appliedX == nextX && service.appliedY == nextY && service.appliedW == nextW && service.appliedH == nextH && touches == null) return
+            if (service.appliedX == nextX && service.appliedY == nextY && service.appliedW == nextW && service.appliedH == nextH) return
             params.x = nextX
             params.y = nextY
             params.width = nextW
@@ -420,58 +438,19 @@ class IslandOverlayService : Service() {
             }
         }
     }
-
-    private fun applyTouchRegion(params: WindowManager.LayoutParams, originX: Int, originY: Int, width: Int, height: Int, touches: List<Map<String, Any?>>?) {
-        val density = resources.displayMetrics.density
-        val region = Region()
-        val targets = ArrayList<RectF>()
-        if (touches != null) {
-            for (touch in touches) {
-                val left = ((touch["left"] as? Number)?.toFloat() ?: continue) * density - originX
-                val top = ((touch["top"] as? Number)?.toFloat() ?: continue) * density - originY
-                val right = ((touch["right"] as? Number)?.toFloat() ?: continue) * density - originX
-                val bottom = ((touch["bottom"] as? Number)?.toFloat() ?: continue) * density - originY
-                if (right - left < 1f || bottom - top < 1f) continue
-                targets.add(RectF(left, top, right, bottom))
-            }
-        }
-        if (targets.isEmpty()) targets.add(RectF(0f, 0f, width.toFloat(), height.toFloat()))
-        for (local in targets) {
-            val path = Path()
-            val radius = (local.height() / 2f).coerceAtMost(48f * density)
-            path.addRoundRect(local, radius, radius, Path.Direction.CW)
-            val clip = Region(local.left.toInt() - 1, local.top.toInt() - 1, local.right.toInt() + 1, local.bottom.toInt() + 1)
-            val part = Region()
-            part.setPath(path, clip)
-            region.op(part, Region.Op.UNION)
-        }
-        // The touchable-region fields are hidden. Reflection lets the gap and the
-        // capsule corners pass through; FLAG_NOT_TOUCH_MODAL already does that
-        // for anything outside the window if the platform blocks the fields.
-        try {
-            val clazz = WindowManager.LayoutParams::class.java
-            val insets = clazz.getDeclaredField("touchableInsets")
-            val regionField = clazz.getDeclaredField("touchableRegion")
-            insets.isAccessible = true
-            regionField.isAccessible = true
-            val existing = regionField.get(params) as? Region
-            if (existing == null) regionField.set(params, region) else existing.set(region)
-            insets.setInt(params, 3)
-        } catch (error: Throwable) {
-            Log.w(TAG, "Island touch region not applied", error)
-        }
-    }
 }
 
 private class IslandHost(context: Context) : FrameLayout(context) {
     var onOutside: (() -> Unit)? = null
+    var flutterChild: View? = null
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (ev.actionMasked == MotionEvent.ACTION_OUTSIDE) {
             onOutside?.invoke()
             return true
         }
-        return super.dispatchTouchEvent(ev)
+        if (super.dispatchTouchEvent(ev)) return true
+        return flutterChild?.dispatchTouchEvent(ev) ?: false
     }
 }
 
