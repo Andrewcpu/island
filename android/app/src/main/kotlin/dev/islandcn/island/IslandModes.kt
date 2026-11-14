@@ -1,10 +1,12 @@
 package dev.islandcn.island
 
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -65,21 +67,22 @@ internal object IslandModes {
         now: Double,
         hits: Hits,
         alpha: Int,
+        art: Bitmap? = null,
     ) {
         hits.clear()
         if (kind == Kind.EXPANDED) {
-            drawExpanded(canvas, id, titleText, detail, valueText, accent, progress, glyph, elapsed, remaining, pill, hole, now, hits, alpha)
+            drawExpanded(canvas, id, titleText, detail, valueText, accent, progress, glyph, elapsed, remaining, pill, hole, now, hits, alpha, art)
         } else {
-            drawCompact(canvas, id, titleText, detail, valueText, trail, accent, progress, leading, trailing, now, alpha)
+            drawCompact(canvas, id, titleText, detail, valueText, trail, accent, progress, leading, trailing, now, alpha, art)
         }
     }
 
-    fun drawBubble(canvas: Canvas, id: String, seed: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int) {
+    fun drawBubble(canvas: Canvas, id: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int, art: Bitmap? = null) {
         val lead = DRect(bubble.left + 6.42, bubble.centerY - 11, bubble.left + 28.42, bubble.centerY + 11)
         when (id) {
             "timer", "timer-done" -> ring(canvas, lead, progress.coerceIn(0f, 1f), accent, tint(accent, 0.25f), 2.4f, alpha)
             "now-playing" -> {
-                artwork(canvas, seed, lead, 6f, alpha)
+                cover(canvas, art, lead, 6f, alpha)
                 meter(canvas, DRect(bubble.right - 28, bubble.centerY - 8.5, bubble.right - 7.2, bubble.centerY + 8.5), accent, 4, 2.4f, 1.9f, now, alpha, playing = true)
             }
             "upload", "transfer" -> ring(canvas, DRect(bubble.centerX - 10, bubble.centerY - 10, bubble.centerX + 10, bubble.centerY + 10), progress, accent, 0x29FFFFFF, 2.6f, alpha)
@@ -101,6 +104,7 @@ internal object IslandModes {
         trailing: DRect?,
         now: Double,
         alpha: Int,
+        art: Bitmap?,
     ) {
         val lead = leading ?: return
         val trailRect = trailing
@@ -110,7 +114,7 @@ internal object IslandModes {
                 textIn(canvas, trail, compact, accent, trailRect, true, alpha)
             }
             "now-playing" -> {
-                artwork(canvas, "$titleText $detail", lead, 6f, alpha)
+                cover(canvas, art, lead, 6f, alpha)
                 if (trailRect != null) meter(canvas, trailRect, accent, 6, 2.4f, 1.9f, now, alpha, valueText == "Playing")
             }
             "call" -> {
@@ -179,12 +183,13 @@ internal object IslandModes {
         now: Double,
         hits: Hits,
         alpha: Int,
+        art: Bitmap?,
     ) {
         val contentTop = pill.top + 18.18
         val right = pill.right - 17.81
         when (id) {
             "timer", "timer-done" -> timerExpanded(canvas, pill, contentTop, right, titleText, valueText, accent, detail == "Paused", hits, alpha)
-            "now-playing" -> playerExpanded(canvas, pill, titleText, detail, accent, valueText == "Playing", progress, elapsed, remaining, now, hits, alpha)
+            "now-playing" -> playerExpanded(canvas, pill, titleText, detail, accent, valueText == "Playing", progress, elapsed, remaining, now, hits, alpha, art)
             "call" -> callExpanded(canvas, pill, titleText, detail, valueText, hits, alpha)
             "battery" -> batteryExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
             "eta" -> etaExpanded(canvas, pill, titleText, detail, valueText, accent, hole, alpha)
@@ -215,9 +220,9 @@ internal object IslandModes {
         canvas.drawText(time, (right - value.measureText(time)).toFloat(), (top + 18 + 30).toFloat(), value)
     }
 
-    private fun playerExpanded(canvas: Canvas, pill: DRect, titleText: String, artist: String, accent: Int, playing: Boolean, fraction: Float, elapsed: String, remaining: String, now: Double, hits: Hits, alpha: Int) {
-        val art = DRect(pill.left + 21.7, pill.top + 21.9, pill.left + 21.7 + 59.5, pill.top + 21.9 + 59.5)
-        artwork(canvas, "$titleText $artist", art, 14f, alpha)
+    private fun playerExpanded(canvas: Canvas, pill: DRect, titleText: String, artist: String, accent: Int, playing: Boolean, fraction: Float, elapsed: String, remaining: String, now: Double, hits: Hits, alpha: Int, art: Bitmap?) {
+        val artBox = DRect(pill.left + 21.7, pill.top + 21.9, pill.left + 21.7 + 59.5, pill.top + 21.9 + 59.5)
+        cover(canvas, art, artBox, 14f, alpha)
         val textLeft = pill.left + 98
         val limit = pill.right - 70
         player.color = Color.WHITE
@@ -494,14 +499,23 @@ internal object IslandModes {
         canvas.drawRoundRect(RectF((x + bodyW + 1).toFloat(), (y + (h - nubH) / 2).toFloat(), (x + bodyW + 1 + nubW).toFloat(), (y + (h + nubH) / 2).toFloat()), 1f, 1f, fill)
     }
 
-    private fun artwork(canvas: Canvas, seed: String, rect: DRect, radius: Float, alpha: Int) {
-        val palette = palettes[seed.fold(0) { acc, c -> acc * 31 + c.code } and 7]
-        fill.color = palette
-        fill.alpha = alpha
-        canvas.drawRoundRect(rect.toRect(), radius, radius, fill)
-        fill.color = Color.WHITE
-        fill.alpha = (alpha * 0.35f).toInt()
-        canvas.drawCircle(rect.centerX.toFloat(), (rect.centerY - rect.height * 0.1).toFloat(), (rect.height * 0.28).toFloat(), fill)
+    private val coverPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+
+    private fun cover(canvas: Canvas, bitmap: Bitmap?, rect: DRect, radius: Float, alpha: Int) {
+        if (bitmap == null || bitmap.isRecycled || rect.width < 1.0 || rect.height < 1.0) return
+        val corner = radius.toDouble().coerceAtMost(min(rect.width, rect.height) / 2.0)
+        canvas.save()
+        canvas.clipPath(continuousRect(rect, corner, 0.72))
+        val bw = bitmap.width.toFloat()
+        val bh = bitmap.height.toFloat()
+        val scale = max(rect.width.toFloat() / bw, rect.height.toFloat() / bh)
+        val dw = bw * scale
+        val dh = bh * scale
+        val left = rect.centerX.toFloat() - dw / 2f
+        val top = rect.centerY.toFloat() - dh / 2f
+        coverPaint.alpha = alpha
+        canvas.drawBitmap(bitmap, null, RectF(left, top, left + dw, top + dh), coverPaint)
+        canvas.restore()
     }
 
     private fun thumb(canvas: Canvas, rect: DRect, accent: Int, alpha: Int) {
@@ -623,11 +637,6 @@ internal object IslandModes {
     private val accents = intArrayOf(
         0xFF5FE0C4.toInt(), 0xFFFF7A5C.toInt(), 0xFFD68CFF.toInt(), 0xFFA9E05A.toInt(),
         0xFF5CB8FF.toInt(), 0xFFFFB547.toInt(), 0xFFFF8FB6.toInt(), 0xFFFF7D52.toInt(),
-    )
-
-    private val palettes = intArrayOf(
-        0xFF11616B.toInt(), 0xFF7C1A3B.toInt(), 0xFF43358A.toInt(), 0xFF2B6236.toInt(),
-        0xFF1B4A85.toInt(), 0xFFA44C17.toInt(), 0xFF97445F.toInt(), 0xFF363B44.toInt(),
     )
 
     private fun DRect.toRect() = RectF(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())

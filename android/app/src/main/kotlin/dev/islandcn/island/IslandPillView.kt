@@ -41,6 +41,7 @@ class IslandPillView(context: Context) : View(context) {
     private val hits = IslandModes.Hits()
     private var mediaPosition = 0L
     private var mediaDuration = 0L
+    private var mediaTrack: IslandMedia.Track? = null
     private var timerEnds = 0L
     private var timerLeft = 0L
     private var timerPaused = false
@@ -102,6 +103,7 @@ class IslandPillView(context: Context) : View(context) {
     fun onMedia(track: IslandMedia.Track?) {
         if (sample != "music" && sample != "split") return
         if (track == null) {
+            mediaTrack = null
             if (sample == "music") clearAll()
             else if (faces.containsKey("now-playing")) {
                 faces.remove("now-playing")
@@ -327,11 +329,16 @@ class IslandPillView(context: Context) : View(context) {
         canvas.save()
         canvas.clipPath(clip)
         val alpha = (reveal * 255).toInt()
-        val elapsed = if (mediaDuration > 0L) clock(mediaPosition) else ""
-        val remaining = if (mediaDuration > 0L) "−${clock((mediaDuration - mediaPosition).coerceAtLeast(0))}" else ""
+        val track = if (face.id == "now-playing") mediaTrack else null
+        val live = if (track != null) IslandMedia.livePosition(track) else mediaPosition
+        val duration = track?.duration ?: mediaDuration
+        val elapsed = if (track != null) clock(live) else ""
+        val remaining = if (track != null && duration > 0L) "−${clock((duration - live).coerceAtLeast(0))}" else ""
+        val progress = if (track != null && duration > 0L) (live.toFloat() / duration).coerceIn(0f, 1f) else face.progress
         IslandModes.draw(
-            canvas, face.id, face.title, face.detail, face.value, face.trail, face.accent, face.progress,
+            canvas, face.id, face.title, face.detail, face.value, face.trail, face.accent, progress,
             face.glyph, elapsed, remaining, rig.kind, pill, rig.hole, slots.first, slots.second, rig.now, hits, alpha,
+            art = track?.art,
         )
         canvas.restore()
         val second = faces[rig.secondary?.id]
@@ -339,7 +346,10 @@ class IslandPillView(context: Context) : View(context) {
             val bubbleClip = continuousRect(bubble, bubble.height / 2, 0.72)
             canvas.save()
             canvas.clipPath(bubbleClip)
-            IslandModes.drawBubble(canvas, second.id, second.title, second.accent, second.progress, bubble, rig.now, alpha)
+            IslandModes.drawBubble(
+                canvas, second.id, second.accent, second.progress, bubble, rig.now, alpha,
+                art = if (second.id == "now-playing") mediaTrack?.art else null,
+            )
             canvas.restore()
         }
     }
@@ -479,9 +489,11 @@ class IslandPillView(context: Context) : View(context) {
     private fun showTrack(track: IslandMedia.Track) {
         val state = if (track.playing) "Playing" else "Paused"
         val artist = track.artist.ifBlank { state }
-        mediaPosition = track.position
+        mediaTrack = track
+        val live = IslandMedia.livePosition(track)
+        mediaPosition = live
         mediaDuration = track.duration
-        val fraction = if (track.duration > 0L) track.position.toFloat() / track.duration else 0f
+        val fraction = if (track.duration > 0L) live.toFloat() / track.duration else 0f
         val existing = faces["now-playing"]
         if (existing != null && existing.title == track.title && existing.detail == artist && existing.value == state) {
             existing.progress = fraction
@@ -535,6 +547,7 @@ class IslandPillView(context: Context) : View(context) {
     private fun clearAll() {
         releaseMic()
         sample = null
+        mediaTrack = null
         faces.clear()
         timerDoneAt = 0.0
         uploadStarted = 0L

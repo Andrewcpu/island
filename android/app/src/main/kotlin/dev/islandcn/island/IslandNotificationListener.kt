@@ -64,24 +64,19 @@ class IslandNotificationListener : NotificationListenerService() {
     }
 
     private fun emitMedia(controller: MediaController) {
-        val meta = controller.metadata
-        val state = controller.playbackState
-        val title = meta?.getString(MediaMetadata.METADATA_KEY_TITLE)?.trim().orEmpty()
-        val artist = meta?.getString(MediaMetadata.METADATA_KEY_ARTIST)?.trim().orEmpty()
-        val playing = state?.state == PlaybackState.STATE_PLAYING
-        val paused = state?.state == PlaybackState.STATE_PAUSED
+        controls = controller.transportControls
+        val track = IslandMedia.describe(this, controller)
         IslandBus.emit(
             mapOf(
                 "type" to "media",
-                "title" to title,
-                "artist" to artist,
-                "duration" to (meta?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L),
-                "position" to (state?.position ?: 0L),
-                "playing" to playing,
+                "title" to track?.title.orEmpty(),
+                "artist" to track?.artist.orEmpty(),
+                "duration" to (track?.duration ?: 0L),
+                "position" to (track?.let { IslandMedia.livePosition(it) } ?: 0L),
+                "playing" to (track?.playing == true),
             ),
         )
-        if (title.isEmpty() || (!playing && !paused)) IslandOverlayService.onMedia(null)
-        else IslandOverlayService.onMedia(IslandMedia.Track(title, artist, playing))
+        IslandOverlayService.onMedia(track)
     }
 
     companion object {
