@@ -86,6 +86,7 @@ class IslandPillView(context: Context) : View(context) {
         isFocusable = false
         isFocusableInTouchMode = false
         rig.onPressed = { id -> onTap(id) }
+        IslandModes.install(context)
     }
 
     fun windowFrame(): IntArray {

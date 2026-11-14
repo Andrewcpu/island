@@ -1,11 +1,14 @@
 package dev.islandcn.island
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
+import androidx.core.content.ContextCompat
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -46,6 +49,15 @@ internal object IslandModes {
     private val label14 = text(14f, 400, 0f)
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+    private var phoneMissed: Drawable? = null
+    private var chatBubble: Drawable? = null
+
+    /** Material Icons filled: phone_missed and chat_bubble. */
+    fun install(context: Context) {
+        if (phoneMissed != null) return
+        phoneMissed = ContextCompat.getDrawable(context, R.drawable.ic_phone_missed)?.mutate()
+        chatBubble = ContextCompat.getDrawable(context, R.drawable.ic_chat_bubble)?.mutate()
+    }
 
     fun draw(
         canvas: Canvas,
@@ -622,34 +634,16 @@ internal object IslandModes {
         canvas.drawOval(rect.toRect(), fill)
     }
 
-    /** A handset with the missed-call arrow, not a box standing in for the icon. */
-    private fun drawMissedCall(canvas: Canvas, rect: DRect, color: Int, alpha: Int) {
+    private fun symbol(canvas: Canvas, drawable: Drawable?, rect: DRect, color: Int, alpha: Int) {
+        val icon = drawable ?: return
         val size = min(rect.width, rect.height).toFloat().coerceAtLeast(1f)
         canvas.save()
         canvas.translate(rect.centerX.toFloat(), rect.centerY.toFloat())
         canvas.scale(size / 24f, size / 24f)
-        canvas.translate(-12f, -12f)
-        fill.color = color
-        fill.alpha = alpha
-        val handset = android.graphics.Path().apply {
-            moveTo(10.4f, 2.8f)
-            cubicTo(11.8f, 2.4f, 13.4f, 3.6f, 13.8f, 5.4f)
-            cubicTo(14.2f, 7.0f, 13.4f, 8.2f, 14.6f, 9.6f)
-            cubicTo(15.8f, 11.0f, 17.4f, 10.4f, 19.0f, 11.4f)
-            cubicTo(20.6f, 12.6f, 20.2f, 14.8f, 18.6f, 16.2f)
-            cubicTo(16.2f, 18.4f, 10.6f, 14.4f, 8.4f, 10.8f)
-            cubicTo(6.6f, 7.8f, 8.4f, 3.6f, 10.4f, 2.8f)
-            close()
-        }
-        canvas.drawPath(handset, fill)
-        stroke.color = color
-        stroke.alpha = alpha
-        stroke.strokeWidth = 1.7f
-        stroke.strokeCap = Paint.Cap.ROUND
-        stroke.strokeJoin = Paint.Join.ROUND
-        canvas.drawLine(2.4f, 13.6f, 2.4f, 21.2f, stroke)
-        canvas.drawLine(2.4f, 21.2f, 10.0f, 21.2f, stroke)
-        canvas.drawLine(2.4f, 13.6f, 7.6f, 18.8f, stroke)
+        icon.setTint(color)
+        icon.alpha = alpha
+        icon.setBounds(-12, -12, 12, 12)
+        icon.draw(canvas)
         canvas.restore()
     }
 
@@ -674,7 +668,7 @@ internal object IslandModes {
                 canvas.drawLine(cx - s * 0.1f, cy + s * 0.15f, cx + s * 0.7f, cy + s * 0.7f, stroke)
             }
             "missed" -> {
-                drawMissedCall(canvas, rect, color, alpha)
+                symbol(canvas, phoneMissed, rect, color, alpha)
                 return
             }
             "hangup" -> canvas.drawLine(cx - s, cy, cx + s, cy, stroke.apply { strokeWidth = s * 0.28f })
@@ -704,7 +698,10 @@ internal object IslandModes {
                 canvas.drawCircle(cx + s * 0.5f, cy + s * 0.55f, s * 0.22f, fill)
             }
             "box", "upload" -> canvas.drawRoundRect(RectF(cx - s * 0.7f, cy - s * 0.55f, cx + s * 0.7f, cy + s * 0.7f), 3f, 3f, stroke)
-            "message" -> canvas.drawRoundRect(RectF(cx - s, cy - s * 0.7f, cx + s, cy + s * 0.45f), s * 0.4f, s * 0.4f, stroke)
+            "message" -> {
+                symbol(canvas, chatBubble, rect, color, alpha)
+                return
+            }
             "event" -> canvas.drawRoundRect(RectF(cx - s * 0.7f, cy - s * 0.8f, cx + s * 0.7f, cy + s * 0.8f), 3f, 3f, stroke)
             "back", "forward" -> {
                 val dir = if (name == "back") -1f else 1f
