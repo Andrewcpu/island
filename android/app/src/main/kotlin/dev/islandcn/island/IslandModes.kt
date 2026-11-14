@@ -189,7 +189,7 @@ internal object IslandModes {
         val right = pill.right - 17.81
         when (id) {
             "timer", "timer-done" -> timerExpanded(canvas, pill, contentTop, right, titleText, valueText, accent, detail == "Paused", hits, alpha)
-            "now-playing" -> playerExpanded(canvas, pill, titleText, detail, accent, valueText == "Playing", progress, elapsed, remaining, now, hits, alpha, art)
+            "now-playing" -> playerExpanded(canvas, pill, hole, titleText, detail, accent, valueText == "Playing", progress, elapsed, remaining, now, hits, alpha, art)
             "call" -> callExpanded(canvas, pill, titleText, detail, valueText, hits, alpha)
             "battery" -> batteryExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
             "eta" -> etaExpanded(canvas, pill, titleText, detail, valueText, accent, hole, alpha)
@@ -220,17 +220,26 @@ internal object IslandModes {
         canvas.drawText(time, (right - value.measureText(time)).toFloat(), (top + 18 + 30).toFloat(), value)
     }
 
-    private fun playerExpanded(canvas: Canvas, pill: DRect, titleText: String, artist: String, accent: Int, playing: Boolean, fraction: Float, elapsed: String, remaining: String, now: Double, hits: Hits, alpha: Int, art: Bitmap?) {
-        val artBox = DRect(pill.left + 21.7, pill.top + 21.9, pill.left + 21.7 + 59.5, pill.top + 21.9 + 59.5)
+    private fun playerExpanded(canvas: Canvas, pill: DRect, hole: DRect, titleText: String, artist: String, accent: Int, playing: Boolean, fraction: Float, elapsed: String, remaining: String, now: Double, hits: Hits, alpha: Int, art: Bitmap?) {
+        var artBox = DRect(pill.left + 21.7, pill.top + 21.9, pill.left + 21.7 + 59.5, pill.top + 21.9 + 59.5)
+        if (artBox.overlaps(hole)) {
+            val nudge = hole.left - 8.0 - artBox.right
+            if (artBox.left + nudge >= pill.left + 8.0) {
+                artBox = DRect(artBox.left + nudge, artBox.top, artBox.right + nudge, artBox.bottom)
+            }
+        }
         cover(canvas, art, artBox, 14f, alpha)
-        val textLeft = pill.left + 98
-        val limit = pill.right - 70
+        // Title and artist sit in the open column after the cover and before the cutout.
+        // A long title used to run from 98pt straight across the punch hole.
+        val column = textBesideCutout(pill.left + 98.0, hole, pill.right - 56.0)
         player.color = Color.WHITE
         player.alpha = alpha
-        canvas.drawText(ellipsize(titleText, player, limit - textLeft), textLeft.toFloat(), (pill.top + 47.3).toFloat(), player)
         playerSub.color = 0xFF898989.toInt()
         playerSub.alpha = alpha
-        canvas.drawText(ellipsize(artist, playerSub, limit - textLeft), textLeft.toFloat(), (pill.top + 64.4).toFloat(), playerSub)
+        if (column.second - column.first > 12.0) {
+            canvas.drawText(ellipsize(titleText, player, column.second - column.first), column.first.toFloat(), (pill.top + 47.3).toFloat(), player)
+            canvas.drawText(ellipsize(artist, playerSub, column.second - column.first), column.first.toFloat(), (pill.top + 64.4).toFloat(), playerSub)
+        }
         val meter = DRect(pill.right - 26 - 24, pill.top + 26.3, pill.right - 26, pill.top + 46.3)
         meter(canvas, meter, accent, 6, 2.4f, 1.9f, now, alpha, playing)
         val barTop = pill.top + 102.7
@@ -249,9 +258,69 @@ internal object IslandModes {
         canvas.drawText(remainingLabel, (pill.right - 24 - small.measureText(remainingLabel)).toFloat(), (barTop + 4).toFloat(), small)
         val buttonY = pill.top + 142
         hits.toggle = DRect(pill.centerX - 18, buttonY - 18, pill.centerX + 18, buttonY + 18)
-        glyph(canvas, if (playing) "pause" else "play", hits.toggle, Color.WHITE, alpha)
-        glyph(canvas, "back", DRect(pill.centerX - 73.5 - 17, buttonY - 17, pill.centerX - 73.5 + 17, buttonY + 17), Color.WHITE, alpha)
-        glyph(canvas, "forward", DRect(pill.centerX + 73.5 - 17, buttonY - 17, pill.centerX + 73.5 + 17, buttonY + 17), Color.WHITE, alpha)
+        musicGlyph(canvas, if (playing) "pause" else "play", pill.centerX, buttonY, 30.0, Color.WHITE, alpha)
+        musicGlyph(canvas, "back", pill.centerX - 73.5, buttonY, 34.0, Color.WHITE, alpha)
+        musicGlyph(canvas, "forward", pill.centerX + 73.5, buttonY, 34.0, Color.WHITE, alpha)
+    }
+
+    /** The run of text that stays off the cutout: after the cover, ending 8pt before the hole. */
+    private fun textBesideCutout(start: Double, hole: DRect, farEnd: Double): Pair<Double, Double> {
+        val before = hole.left - 8.0
+        if (start + 16.0 < before) return start to before
+        val after = hole.right + 8.0
+        return max(start, after) to farEnd
+    }
+
+    /** Play and pause at 30pt, previous and next at 34pt. Even filled shapes, not stroked doodles. */
+    private fun musicGlyph(canvas: Canvas, name: String, cx: Double, cy: Double, box: Double, color: Int, alpha: Int) {
+        fill.color = color
+        fill.alpha = alpha
+        val x = cx.toFloat()
+        val y = cy.toFloat()
+        val scale = box.toFloat()
+        when (name) {
+            "pause" -> {
+                val h = scale * 27.6f / 30f
+                val w = scale * 5.2f / 30f
+                val gap = scale * 4.4f / 30f
+                val top = y - h / 2f
+                canvas.drawRoundRect(RectF(x - gap / 2f - w, top, x - gap / 2f, top + h), w / 2f, w / 2f, fill)
+                canvas.drawRoundRect(RectF(x + gap / 2f, top, x + gap / 2f + w, top + h), w / 2f, w / 2f, fill)
+            }
+            "play" -> {
+                val h = scale * 27.6f / 30f
+                val w = scale * 22f / 30f
+                val left = x - w / 3f
+                val path = android.graphics.Path()
+                path.moveTo(left, y - h / 2f)
+                path.lineTo(left + w, y)
+                path.lineTo(left, y + h / 2f)
+                path.close()
+                canvas.drawPath(path, fill)
+            }
+            else -> {
+                val pointingRight = name != "back"
+                val h = scale * 20f / 34f
+                val w = scale * 15.75f / 34f
+                val origin = x - scale * 31.5f / 34f / 2f
+                fun triangle(edge: Float) {
+                    val path = android.graphics.Path()
+                    if (pointingRight) {
+                        path.moveTo(edge, y - h / 2f)
+                        path.lineTo(edge + w, y)
+                        path.lineTo(edge, y + h / 2f)
+                    } else {
+                        path.moveTo(edge + w, y - h / 2f)
+                        path.lineTo(edge, y)
+                        path.lineTo(edge + w, y + h / 2f)
+                    }
+                    path.close()
+                    canvas.drawPath(path, fill)
+                }
+                triangle(origin)
+                triangle(origin + w)
+            }
+        }
     }
 
     private fun callExpanded(canvas: Canvas, pill: DRect, caller: String, detail: String, valueText: String, hits: Hits, alpha: Int) {
