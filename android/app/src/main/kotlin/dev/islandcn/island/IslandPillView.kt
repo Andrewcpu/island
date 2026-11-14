@@ -126,15 +126,44 @@ class IslandPillView(context: Context) : View(context) {
             "ringing" -> showLiveCall(ringing = true, label = label)
             "offhook" -> showLiveCall(ringing = false, label = label)
             else -> {
+                val missedName = callerLabel
+                val wasRinging = faces["call"]?.value == "Ring"
                 liveCall = false
                 callerLabel = ""
                 callFrom = 0L
-                if (sample != "call" && faces.remove("call") != null) {
+                if (sample == "call") return
+                if (wasRinging && missedName.isNotBlank()) {
+                    showMissed(missedName)
+                    return
+                }
+                if (faces["call"]?.value == "Missed") return
+                if (faces.remove("call") != null) {
                     rig.end("call")
                     kick()
                 }
             }
         }
+    }
+
+    fun onMissedCall(name: String) {
+        if (liveCall) return
+        showMissed(name)
+    }
+
+    fun onMissedCallCleared() {
+        if (liveCall || sample == "call") return
+        val face = faces["call"] ?: return
+        if (face.value != "Missed") return
+        faces.remove("call")
+        rig.end("call")
+        kick()
+    }
+
+    private fun showMissed(name: String) {
+        val title = name.trim().ifBlank { "Unknown" }
+        val existing = faces["call"]
+        if (existing != null && existing.value == "Missed" && existing.title == title) return
+        present(face("call", "missed", "", "", title, "Missed call", "Missed", Color.WHITE, -1f, 48.0, 90), alert = existing == null)
     }
 
     fun onLiveMessage(sender: String, body: String) {
@@ -421,19 +450,12 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     private fun drawContent(canvas: Canvas, pill: DRect, bubble: DRect?) {
-        val face = faces[rig.primary?.id] ?: return
+        val face = faces[rig.shownId()] ?: return
         if (rig.kind == Kind.IDLE) return
         val reveal = reveal()
         if (reveal <= 0f) return
         val slots = rig.slotRects()
         val clip = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
-        val lens = rig.hole
-        val radius = (min(lens.width, lens.height) / 2.0 + 1.0).toFloat()
-        if (radius > 1f) {
-            val hole = Path()
-            hole.addCircle(lens.centerX.toFloat(), lens.centerY.toFloat(), radius, Path.Direction.CW)
-            clip.op(hole, Path.Op.DIFFERENCE)
-        }
         canvas.save()
         canvas.clipPath(clip)
         val alpha = (reveal * 255).toInt()
@@ -457,6 +479,7 @@ class IslandPillView(context: Context) : View(context) {
             IslandModes.drawBubble(
                 canvas, second.id, second.accent, second.progress, bubble, rig.now, alpha,
                 art = if (second.id == "now-playing") mediaTrack?.art else null,
+                mark = second.glyph,
             )
             canvas.restore()
         }
@@ -707,7 +730,7 @@ class IslandPillView(context: Context) : View(context) {
         val (leadW, trailW) = when (face.id) {
             "timer", "timer-done" -> 22.0 to 48.0
             "now-playing" -> 22.0 to 24.0
-            "call" -> if (face.value == "Ring") 22.0 to 22.0 else 66.0 to 66.0
+            "call" -> if (face.value == "Ring" || face.value == "Missed") 22.0 to 22.0 else 66.0 to 66.0
             "battery" -> 72.0 to 72.0
             "eta" -> 22.0 to 56.0
             "recording" -> if (face.title == "Voice memo") 36.0 to 48.0 else 22.0 to 48.0

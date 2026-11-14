@@ -234,6 +234,7 @@ class IslandOverlayService : Service() {
         private var mediaKnown = false
         private var latestCall: Pair<String, String>? = null
         private var latestMessage: Pair<String, String>? = null
+        private var latestMissed: String? = null
         private var latestTimer: TimerSnap? = null
 
         private data class TimerSnap(val remainingMs: Long, val paused: Boolean, val label: String)
@@ -286,6 +287,16 @@ class IslandOverlayService : Service() {
             deliver(context) { it.onLiveCall(state, label) }
         }
 
+        fun onMissed(context: Context, name: String) {
+            latestMissed = name
+            deliver(context) { it.onMissedCall(name) }
+        }
+
+        fun onMissedCleared() {
+            latestMissed = null
+            instance?.pill?.onMissedCallCleared()
+        }
+
         fun onMessage(context: Context, sender: String, body: String) {
             latestMessage = sender to body
             deliver(context) { it.onLiveMessage(sender, body) }
@@ -318,6 +329,7 @@ class IslandOverlayService : Service() {
 
         private fun applyLive(view: IslandPillView) {
             if (mediaKnown) view.onMedia(latestMedia)
+            latestMissed?.let { view.onMissedCall(it) }
             latestCall?.let { view.onLiveCall(it.first, it.second) }
             latestMessage?.let { view.onLiveMessage(it.first, it.second) }
             latestTimer?.let { view.onLiveTimer(it.remainingMs, it.paused, it.label) }

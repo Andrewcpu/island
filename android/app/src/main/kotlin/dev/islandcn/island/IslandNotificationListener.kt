@@ -14,6 +14,7 @@ import android.service.notification.StatusBarNotification
 class IslandNotificationListener : NotificationListenerService() {
     private val sessions = HashMap<MediaSession.Token, MediaController>()
     private val messages = LinkedHashMap<String, Pair<String, String>>()
+    private val missed = LinkedHashMap<String, String>()
     private val timers = LinkedHashMap<String, TimerNote>()
 
     override fun onListenerConnected() {
@@ -40,8 +41,10 @@ class IslandNotificationListener : NotificationListenerService() {
         val key = sbn?.key ?: return
         val removedMessage = messages.remove(key) != null
         val removedTimer = timers.remove(key) != null
+        val removedMissed = missed.remove(key) != null
         if (removedMessage) publishMessage()
         if (removedTimer) publishTimer()
+        if (removedMissed) publishMissed()
         val token = mediaToken(sbn.notification)
         if (token != null) {
             sessions.remove(token)?.unregisterCallback(mediaCallback)
@@ -55,6 +58,11 @@ class IslandNotificationListener : NotificationListenerService() {
         val token = mediaToken(notification)
         if (token != null) {
             publishMedia(token)
+            return
+        }
+        if (isMissedCall(notification)) {
+            missed[sbn.key] = callerName(notification) ?: "Unknown"
+            publishMissed()
             return
         }
         if (isCall(notification)) {
@@ -155,6 +163,19 @@ class IslandNotificationListener : NotificationListenerService() {
             extras.getParcelable(Notification.EXTRA_MEDIA_SESSION)
         }
         return token as? MediaSession.Token
+    }
+
+    private fun publishMissed() {
+        val name = missed.values.lastOrNull()
+        if (name == null) IslandOverlayService.onMissedCleared()
+        else IslandOverlayService.onMissed(this, name)
+    }
+
+    private fun isMissedCall(notification: Notification): Boolean {
+        if (notification.category == "missed_call") return true
+        val title = notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+        val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+        return "$title $text".contains("missed call", ignoreCase = true)
     }
 
     private fun isCall(notification: Notification): Boolean {

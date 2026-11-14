@@ -190,7 +190,7 @@ internal class IslandRig {
     private var alert = false
     private val sched = mutableListOf<Pair<Double, () -> Unit>>()
 
-    private data class Press(val target: String, val t0: Double, var decided: Boolean = false, var up: Boolean = false, var expanded: Boolean = false, var returned: Boolean = false)
+    private data class Press(val target: String, val t0: Double, val activityId: String?, var decided: Boolean = false, var up: Boolean = false, var expanded: Boolean = false, var returned: Boolean = false)
     private var press: Press? = null
 
     var hole = DRect(0.0, 0.0, 0.0, 0.0)
@@ -228,6 +228,13 @@ internal class IslandRig {
 
     val primary: Spec? get() = visible().firstOrNull()
     val secondary: Spec? get() = visible().getOrNull(1)
+
+    /** The activity on screen: the one a hold expanded, otherwise the main pill. */
+    fun shownId(): String? {
+        val open = expandedId
+        if (kind == Kind.EXPANDED && open != null && byId.containsKey(open)) return open
+        return visible().firstOrNull()?.id
+    }
     val expanded: Boolean get() = kind == Kind.EXPANDED
     val animating: Boolean get() = press != null || sched.isNotEmpty() || tracks().any { it.busy }
 
@@ -356,7 +363,8 @@ internal class IslandRig {
     }
 
     fun pointerDown(target: String) {
-        press = Press(target, now)
+        val activityId = if (target == "bubble") secondary?.id else primary?.id
+        press = Press(target, now, activityId)
         val bubblePress = target == "bubble"
         scale.aim(
             if (bubblePress) 1.0622 else 1.187,
@@ -369,7 +377,7 @@ internal class IslandRig {
         val current = press ?: return
         val held = now - current.t0
         if (!current.decided && held < 0.1) {
-            val id = if (current.target == "bubble") secondary?.id else primary?.id
+            val id = current.activityId
             if (id != null) onPressed?.invoke(id)
             val idle = kind == Kind.IDLE || primary == null
             val backAt = current.t0 + (if (idle) 0.2 else max(0.22, held + 0.17))
@@ -391,7 +399,7 @@ internal class IslandRig {
                 current.expanded = true
                 if (!idle) {
                     releaseScale(now, idle = false)
-                    expand(if (current.target == "bubble") secondary?.id else primary?.id)
+                    expand(current.activityId)
                 }
             }
             if (idle && !current.returned && held >= 0.236) {

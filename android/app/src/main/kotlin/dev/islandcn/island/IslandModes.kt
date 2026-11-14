@@ -77,7 +77,7 @@ internal object IslandModes {
         }
     }
 
-    fun drawBubble(canvas: Canvas, id: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int, art: Bitmap? = null) {
+    fun drawBubble(canvas: Canvas, id: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int, art: Bitmap? = null, mark: String = "") {
         val lead = DRect(bubble.left + 6.42, bubble.centerY - 11, bubble.left + 28.42, bubble.centerY + 11)
         when (id) {
             "timer", "timer-done" -> ring(canvas, lead, progress.coerceIn(0f, 1f), accent, tint(accent, 0.25f), 2.4f, alpha)
@@ -87,7 +87,7 @@ internal object IslandModes {
             }
             "upload", "transfer" -> ring(canvas, DRect(bubble.centerX - 10, bubble.centerY - 10, bubble.centerX + 10, bubble.centerY + 10), progress, accent, 0x29FFFFFF, 2.6f, alpha)
             "recording" -> meter(canvas, DRect(bubble.centerX - 11, bubble.centerY - 8, bubble.centerX + 11, bubble.centerY + 8), accent, 5, 2f, 2f, now, alpha, playing = true)
-            else -> glyph(canvas, bubbleGlyph(id, accent), lead, accent, alpha)
+            else -> glyph(canvas, if (id == "call" && mark == "missed") "missed" else bubbleGlyph(id, accent), lead, if (mark == "missed") Color.WHITE else accent, alpha)
         }
     }
 
@@ -118,7 +118,10 @@ internal object IslandModes {
                 if (trailRect != null) meter(canvas, trailRect, accent, 6, 2.4f, 1.9f, now, alpha, valueText == "Playing")
             }
             "call" -> {
-                if (valueText == "Ring") {
+                if (valueText == "Missed") {
+                    avatar(canvas, titleText, lead, alpha)
+                    glyph(canvas, "missed", trailRect, Color.WHITE, alpha)
+                } else if (valueText == "Ring") {
                     avatar(canvas, titleText, lead, alpha)
                     glyph(canvas, "phone", trailRect, 0xFF31D259.toInt(), alpha)
                 } else {
@@ -192,13 +195,13 @@ internal object IslandModes {
             "now-playing" -> playerExpanded(canvas, pill, hole, titleText, detail, accent, valueText == "Playing", progress, elapsed, remaining, now, hits, alpha, art)
             "call" -> callExpanded(canvas, pill, titleText, detail, valueText, hits, alpha)
             "battery" -> batteryExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
-            "eta" -> etaExpanded(canvas, pill, titleText, detail, valueText, accent, hole, alpha)
+            "eta" -> etaExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
             "recording" -> recordingExpanded(canvas, pill, titleText, valueText, accent, detail != "Paused", hits, now, alpha)
             "upload", "transfer" -> mediaExpanded(canvas, pill, id, glyph, titleText, detail, valueText, accent, progress, alpha)
-            "message" -> personExpanded(canvas, pill, titleText, detail, hole, alpha)
-            "calendar" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, hole, alpha)
-            "order-a", "order-b" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, hole, alpha)
-            else -> personExpanded(canvas, pill, titleText, detail, hole, alpha)
+            "message" -> personExpanded(canvas, pill, titleText, detail, alpha)
+            "calendar" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
+            "order-a", "order-b" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
+            else -> personExpanded(canvas, pill, titleText, detail, alpha)
         }
     }
 
@@ -370,7 +373,7 @@ internal object IslandModes {
         batteryIcon(canvas, pill.right - 18.5 - 35.5, mid - 8.3, 35.5, percent, if (charging) 0xFF63FF39.toInt() else accent, charging, alpha)
     }
 
-    private fun etaExpanded(canvas: Canvas, pill: DRect, name: String, plate: String, minutes: String, accent: Int, hole: DRect, alpha: Int) {
+    private fun etaExpanded(canvas: Canvas, pill: DRect, name: String, plate: String, minutes: String, accent: Int, alpha: Int) {
         val glyphBox = DRect(pill.left + 21.5, pill.top + 22, pill.left + 65, pill.top + 64)
         glyph(canvas, if (accent == 0xFFFFD60A.toInt()) "box" else "car", glyphBox, accent, alpha)
         val right = pill.right - 25.5
@@ -391,15 +394,13 @@ internal object IslandModes {
         val arrival = "Arriving in $minutes"
         canvas.drawText(arrival, (right - titleRegular.measureText(arrival)).toFloat(), rowY.toFloat(), titleRegular)
         val cap = DRect(pill.left + 20.8, pill.bottom - 20.8 - 44, pill.right - 20.8, pill.bottom - 20.8)
-        if (cap.top > hole.bottom) {
-            fill.color = tint(accent, 0.27f)
-            fill.alpha = alpha
-            canvas.drawRoundRect(cap.toRect(), 22f, 22f, fill)
-            val words = "Message ${name.substringBefore(' ')}"
-            title.color = accent
-            title.alpha = alpha
-            canvas.drawText(words, (cap.centerX - title.measureText(words) / 2).toFloat(), (cap.centerY - (title.ascent() + title.descent()) / 2).toFloat(), title)
-        }
+        fill.color = tint(accent, 0.27f)
+        fill.alpha = alpha
+        canvas.drawRoundRect(cap.toRect(), 22f, 22f, fill)
+        val words = "Message ${name.substringBefore(' ')}"
+        title.color = accent
+        title.alpha = alpha
+        canvas.drawText(words, (cap.centerX - title.measureText(words) / 2).toFloat(), (cap.centerY - (title.ascent() + title.descent()) / 2).toFloat(), title)
     }
 
     private fun recordingExpanded(canvas: Canvas, pill: DRect, name: String, time: String, accent: Int, live: Boolean, hits: Hits, now: Double, alpha: Int) {
@@ -453,11 +454,11 @@ internal object IslandModes {
         ring(canvas, ringBox, progress, accent, 0x29FFFFFF, 4f, alpha, if (id == "upload") valueText.removeSuffix("%") else null)
     }
 
-    private fun personExpanded(canvas: Canvas, pill: DRect, name: String, body: String, hole: DRect, alpha: Int) {
+    private fun personExpanded(canvas: Canvas, pill: DRect, name: String, body: String, alpha: Int) {
         val avatar = DRect(pill.left + 16.3, pill.top + 16.8, pill.left + 66.3, pill.top + 66.8)
         avatar(canvas, name, avatar, alpha)
         val textLeft = pill.left + 76.5
-        val limit = hole.left - 8
+        val limit = pill.right - 18.5
         title.color = Color.WHITE
         title.alpha = alpha
         canvas.drawText(ellipsize(name, title, limit - textLeft), textLeft.toFloat(), (pill.top + 48).toFloat(), title)
@@ -466,14 +467,14 @@ internal object IslandModes {
         canvas.drawText(ellipsize(body, subtitle, pill.right - 18.5 - textLeft), textLeft.toFloat(), (pill.top + 70).toFloat(), subtitle)
     }
 
-    private fun eventExpanded(canvas: Canvas, pill: DRect, name: String, detail: String, valueText: String, accent: Int, hole: DRect, alpha: Int) {
+    private fun eventExpanded(canvas: Canvas, pill: DRect, name: String, detail: String, valueText: String, accent: Int, alpha: Int) {
         val tile = DRect(pill.left + 18.5, pill.top + 18.18, pill.left + 70.5, pill.top + 70.18)
         fill.color = tint(accent, 0.2f)
         fill.alpha = alpha
         canvas.drawRoundRect(tile.toRect(), 12f, 12f, fill)
         glyph(canvas, if (name.startsWith("Order")) "box" else "event", tile, accent, alpha)
         val textLeft = tile.right + 12
-        val limit = min(hole.left - 8, pill.right - 90)
+        val limit = pill.right - 90
         title.color = Color.WHITE
         title.alpha = alpha
         if (limit > textLeft) canvas.drawText(ellipsize(name, title, limit - textLeft), textLeft.toFloat(), (tile.top + 22).toFloat(), title)
@@ -621,6 +622,37 @@ internal object IslandModes {
         canvas.drawOval(rect.toRect(), fill)
     }
 
+    /** A handset with the missed-call arrow, not a box standing in for the icon. */
+    private fun drawMissedCall(canvas: Canvas, rect: DRect, color: Int, alpha: Int) {
+        val size = min(rect.width, rect.height).toFloat().coerceAtLeast(1f)
+        canvas.save()
+        canvas.translate(rect.centerX.toFloat(), rect.centerY.toFloat())
+        canvas.scale(size / 24f, size / 24f)
+        canvas.translate(-12f, -12f)
+        fill.color = color
+        fill.alpha = alpha
+        val handset = android.graphics.Path().apply {
+            moveTo(10.4f, 2.8f)
+            cubicTo(11.8f, 2.4f, 13.4f, 3.6f, 13.8f, 5.4f)
+            cubicTo(14.2f, 7.0f, 13.4f, 8.2f, 14.6f, 9.6f)
+            cubicTo(15.8f, 11.0f, 17.4f, 10.4f, 19.0f, 11.4f)
+            cubicTo(20.6f, 12.6f, 20.2f, 14.8f, 18.6f, 16.2f)
+            cubicTo(16.2f, 18.4f, 10.6f, 14.4f, 8.4f, 10.8f)
+            cubicTo(6.6f, 7.8f, 8.4f, 3.6f, 10.4f, 2.8f)
+            close()
+        }
+        canvas.drawPath(handset, fill)
+        stroke.color = color
+        stroke.alpha = alpha
+        stroke.strokeWidth = 1.7f
+        stroke.strokeCap = Paint.Cap.ROUND
+        stroke.strokeJoin = Paint.Join.ROUND
+        canvas.drawLine(2.4f, 13.6f, 2.4f, 21.2f, stroke)
+        canvas.drawLine(2.4f, 21.2f, 10.0f, 21.2f, stroke)
+        canvas.drawLine(2.4f, 13.6f, 7.6f, 18.8f, stroke)
+        canvas.restore()
+    }
+
     private fun glyph(canvas: Canvas, name: String, rect: DRect?, color: Int, alpha: Int) {
         if (rect == null) return
         val cx = rect.centerX.toFloat()
@@ -640,6 +672,10 @@ internal object IslandModes {
             "phone" -> {
                 canvas.drawRoundRect(RectF(cx - s * 0.55f, cy - s * 0.9f, cx + s * 0.15f, cy + s * 0.2f), s * 0.3f, s * 0.3f, stroke)
                 canvas.drawLine(cx - s * 0.1f, cy + s * 0.15f, cx + s * 0.7f, cy + s * 0.7f, stroke)
+            }
+            "missed" -> {
+                drawMissedCall(canvas, rect, color, alpha)
+                return
             }
             "hangup" -> canvas.drawLine(cx - s, cy, cx + s, cy, stroke.apply { strokeWidth = s * 0.28f })
             "pause" -> {
