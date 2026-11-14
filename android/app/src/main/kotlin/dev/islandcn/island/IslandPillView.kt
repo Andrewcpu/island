@@ -43,6 +43,10 @@ class IslandPillView(context: Context) : View(context) {
     private var sample: String? = null
     private var originX = 0
     private var originY = 0
+    private val screenLoc = IntArray(2)
+    /** Last real window edge. A 0,0 layout pass must not replace it. */
+    private var placedX = Float.NaN
+    private var placedY = Float.NaN
     private var appliedL = Int.MIN_VALUE
     private var appliedT = Int.MIN_VALUE
     private var appliedW = Int.MIN_VALUE
@@ -480,8 +484,9 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val x = (event.x + anchorX()) / density.toDouble()
-        val y = (event.y + originY) / density.toDouble()
+        val origin = placeOrigin()
+        val x = (event.x + origin[0]) / density.toDouble()
+        val y = (event.y + origin[1]) / density.toDouble()
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 val bubble = rig.bubble
@@ -526,9 +531,11 @@ class IslandPillView(context: Context) : View(context) {
         val pill = rig.pill
         if (pill.width < 1 || pill.height < 1) return
         canvas.save()
-        // The window is centered on the camera. Place screen-space dp at the center
-        // of whatever width is actually being drawn, so a settle resize cannot slide the pill.
-        canvas.translate(-anchorX(), -originY.toFloat())
+        // Screen edge of this window, not the compact left publish just computed.
+        // On collapse settle the width is already the compact one while the surface
+        // is still the expanded window; predicting left from that width slides the pill.
+        val origin = placeOrigin()
+        canvas.translate(-origin[0], -origin[1])
         canvas.scale(density, density)
         val expand = ((pill.height - 36.85) / (84.0 - 36.85)).coerceIn(0.0, 1.0)
         canvas.drawPath(continuousRect(rig.sensor, rig.sensor.height / 2, 0.72), black)
@@ -949,15 +956,24 @@ class IslandPillView(context: Context) : View(context) {
     private var latch: DRect? = null
 
     /**
-     * Left edge of this frame, in px. A centered window gets it from the width
-     * on screen, matching CENTER_HORIZONTAL, instead of a left stored earlier.
+     * Where this window actually is. Collapse settle publishes the compact rect
+     * (live: left 495, top 22, 354×138) while the surface is still the expanded
+     * one (left 68, top 6, 1208×386). Deriving the origin from the new width
+     * draws the pill 427px to the left for that frame.
      */
-    private fun anchorX(): Float {
-        if (windowCentered && screenPx > 0 && width > 0) {
-            val xAdj = cameraPx - screenPx / 2
-            return ((screenPx - width) / 2 + xAdj).toFloat()
+    private fun placeOrigin(): FloatArray {
+        if (isAttachedToWindow) {
+            getLocationOnScreen(screenLoc)
+            val sx = screenLoc[0].toFloat()
+            val sy = screenLoc[1].toFloat()
+            if (!(sx == 0f && sy == 0f && (originX > 2 || originY > 2))) {
+                placedX = sx
+                placedY = sy
+                return floatArrayOf(sx, sy)
+            }
         }
-        return originX.toFloat()
+        if (!placedX.isNaN()) return floatArrayOf(placedX, placedY)
+        return floatArrayOf(originX.toFloat(), originY.toFloat())
     }
 
     private fun publish() {

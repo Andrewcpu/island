@@ -84,12 +84,12 @@ class IslandOverlayService : Service() {
         view.bindCutout()
         val frame = view.windowFrame()
         val params = layoutParams(frame[2], frame[3]).apply {
-            gravity = if (view.windowCentered && view.screenPx > 0) {
+            gravity = if (view.screenPx > 0) {
                 Gravity.TOP or Gravity.CENTER_HORIZONTAL
             } else {
                 Gravity.TOP or Gravity.LEFT
             }
-            x = if (view.windowCentered && view.screenPx > 0) view.cameraPx - view.screenPx / 2 else frame[0]
+            x = if (view.screenPx > 0) frame[0] - (view.screenPx - frame[2]) / 2 else frame[0]
             y = frame[1]
         }
         val manager = window ?: return
@@ -151,10 +151,12 @@ class IslandOverlayService : Service() {
         val nextW = width.coerceAtLeast(1)
         val nextH = height.coerceAtLeast(1)
         val pill = view as? IslandPillView
-        val centered = pill != null && pill.windowCentered && pill.screenPx > 0
-        // Centered windows keep a stable x. Width changes stay on the camera;
-        // writing a new absolute left here is what threw the pill off after the spring.
-        val nextX = if (centered && pill != null) pill.cameraPx - pill.screenPx / 2 else left
+        val centered = pill != null && pill.screenPx > 0
+        // Stay on CENTER_HORIZONTAL. Collapse used to flip gravity to LEFT and
+        // write the compact absolute left (music: x 0 → 400) while the surface
+        // was still the expanded window. A symmetric pill keeps x at the camera
+        // offset; width still changes, and the draw origin follows the surface.
+        val nextX = if (centered && pill != null) left - (pill.screenPx - nextW) / 2 else left
         val nextY = top - shiftY
         val nextGravity = if (centered) Gravity.TOP or Gravity.CENTER_HORIZONTAL else Gravity.TOP or Gravity.LEFT
         if (params.gravity == nextGravity && appliedX == nextX && appliedY == nextY && appliedW == nextW && appliedH == nextH) return
