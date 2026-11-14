@@ -462,8 +462,9 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val x = (event.x + originX) / density.toDouble()
-        val y = (event.y + originY) / density.toDouble()
+        val origin = screenOrigin()
+        val x = (event.x + origin[0]) / density.toDouble()
+        val y = (event.y + origin[1]) / density.toDouble()
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 val bubble = rig.bubble
@@ -508,7 +509,10 @@ class IslandPillView(context: Context) : View(context) {
         val pill = rig.pill
         if (pill.width < 1 || pill.height < 1) return
         canvas.save()
-        canvas.translate(-originX.toFloat(), -originY.toFloat())
+        // Screen position of this view, not the origin we last requested. A window
+        // resize that has not landed yet cannot slide the pill off the camera.
+        val origin = screenOrigin()
+        canvas.translate(-origin[0], -origin[1])
         canvas.scale(density, density)
         val expand = ((pill.height - 36.85) / (84.0 - 36.85)).coerceIn(0.0, 1.0)
         canvas.drawPath(continuousRect(rig.sensor, rig.sensor.height / 2, 0.72), black)
@@ -912,6 +916,17 @@ class IslandPillView(context: Context) : View(context) {
 
     /** Held for a whole spring so the window does not follow subpixel edges. */
     private var latch: DRect? = null
+    private val screenLoc = IntArray(2)
+
+    /** Where the view actually is. Falls back to the requested origin before the first layout. */
+    private fun screenOrigin(): FloatArray {
+        if (!isAttachedToWindow) return floatArrayOf(originX.toFloat(), originY.toFloat())
+        getLocationOnScreen(screenLoc)
+        if (screenLoc[0] == 0 && screenLoc[1] == 0 && (originX != 0 || originY != 0)) {
+            return floatArrayOf(originX.toFloat(), originY.toFloat())
+        }
+        return floatArrayOf(screenLoc[0].toFloat(), screenLoc[1].toFloat())
+    }
 
     private fun publish() {
         if (rig.kind != revealKind) {
