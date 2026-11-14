@@ -80,22 +80,29 @@ internal object IslandModes {
         hits: Hits,
         alpha: Int,
         art: Bitmap? = null,
+        playing: Boolean = false,
     ) {
         hits.clear()
         if (kind == Kind.EXPANDED) {
-            drawExpanded(canvas, id, titleText, detail, valueText, accent, progress, glyph, elapsed, remaining, pill, hole, now, hits, alpha, art)
+            drawExpanded(canvas, id, titleText, detail, valueText, accent, progress, glyph, elapsed, remaining, pill, hole, now, hits, alpha, art, playing)
         } else {
-            drawCompact(canvas, id, titleText, detail, valueText, trail, accent, progress, leading, trailing, now, alpha, art)
+            drawCompact(canvas, id, titleText, detail, valueText, trail, accent, progress, leading, trailing, now, alpha, art, playing)
         }
     }
 
-    fun drawBubble(canvas: Canvas, id: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int, art: Bitmap? = null, mark: String = "") {
+    /** Expanded height for a message whose body wraps past one line. */
+    fun messageBody(text: String): Double {
+        val lines = wrapLines(text, subtitle, 230f, 6).size.coerceAtLeast(1)
+        return (48.0 + (lines - 1) * 18.0).coerceIn(48.0, 140.0)
+    }
+
+    fun drawBubble(canvas: Canvas, id: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int, art: Bitmap? = null, mark: String = "", playing: Boolean = false) {
         val lead = DRect(bubble.left + 6.42, bubble.centerY - 11, bubble.left + 28.42, bubble.centerY + 11)
         when (id) {
             "timer", "timer-done" -> ring(canvas, lead, progress.coerceIn(0f, 1f), accent, tint(accent, 0.25f), 2.4f, alpha)
             "now-playing" -> {
                 cover(canvas, art, lead, 6f, alpha)
-                meter(canvas, DRect(bubble.right - 28, bubble.centerY - 8.5, bubble.right - 7.2, bubble.centerY + 8.5), accent, 4, 2.4f, 1.9f, now, alpha, playing = true)
+                meter(canvas, DRect(bubble.right - 28, bubble.centerY - 8.5, bubble.right - 7.2, bubble.centerY + 8.5), accent, 4, 2.4f, 1.9f, musicClock(now, playing), alpha, playing = true)
             }
             "upload", "transfer" -> ring(canvas, DRect(bubble.centerX - 10, bubble.centerY - 10, bubble.centerX + 10, bubble.centerY + 10), progress, accent, 0x29FFFFFF, 2.6f, alpha)
             "recording" -> meter(canvas, DRect(bubble.centerX - 11, bubble.centerY - 8, bubble.centerX + 11, bubble.centerY + 8), accent, 5, 2f, 2f, now, alpha, playing = true)
@@ -117,6 +124,7 @@ internal object IslandModes {
         now: Double,
         alpha: Int,
         art: Bitmap?,
+        playing: Boolean,
     ) {
         val lead = leading ?: return
         val trailRect = trailing
@@ -127,7 +135,7 @@ internal object IslandModes {
             }
             "now-playing" -> {
                 cover(canvas, art, lead, 6f, alpha)
-                if (trailRect != null) meter(canvas, trailRect, accent, 6, 2.4f, 1.9f, now, alpha, valueText == "Playing")
+                if (trailRect != null) meter(canvas, trailRect, accent, 6, 2.4f, 1.9f, musicClock(now, playing), alpha, true)
             }
             "call" -> {
                 if (valueText == "Missed") {
@@ -199,12 +207,13 @@ internal object IslandModes {
         hits: Hits,
         alpha: Int,
         art: Bitmap?,
+        playing: Boolean,
     ) {
         val contentTop = pill.top + 18.18
         val right = pill.right - 17.81
         when (id) {
             "timer", "timer-done" -> timerExpanded(canvas, pill, contentTop, right, titleText, valueText, accent, detail == "Paused", hits, alpha)
-            "now-playing" -> playerExpanded(canvas, pill, hole, titleText, detail, accent, valueText == "Playing", progress, elapsed, remaining, now, hits, alpha, art)
+            "now-playing" -> playerExpanded(canvas, pill, hole, titleText, detail, accent, playing, progress, elapsed, remaining, now, hits, alpha, art)
             "call" -> callExpanded(canvas, pill, titleText, detail, valueText, hits, alpha)
             "battery" -> batteryExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
             "eta" -> etaExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
@@ -255,7 +264,7 @@ internal object IslandModes {
         playerSub.alpha = alpha
         trackLine(canvas, titleText, player, textLeft, textRight, pill.top + 47.3, meter)
         trackLine(canvas, artist, playerSub, textLeft, textRight, pill.top + 64.4, meter)
-        meter(canvas, meter, accent, 6, 2.4f, 1.9f, now, alpha, playing)
+        meter(canvas, meter, accent, 6, 2.4f, 1.9f, musicClock(now, playing), alpha, true)
         val barTop = pill.top + 102.7
         small.color = 0xFF898989.toInt()
         small.alpha = alpha
@@ -457,8 +466,8 @@ internal object IslandModes {
         title.color = Color.WHITE
         title.alpha = alpha
         val white = when {
-            id == "upload" && progress >= 1f -> "Uploaded"
-            id == "upload" -> "Uploading"
+            id == "upload" && progress >= 1f -> if (titleText.isNotBlank() && titleText != "Uploading") titleText else "Uploaded"
+            id == "upload" -> titleText.ifBlank { "Uploading" }
             else -> "To $titleText"
         }
         canvas.drawText(ellipsize(white, title, limit - textLeft), textLeft.toFloat(), (pill.top + 66.2).toFloat(), title)
@@ -476,7 +485,13 @@ internal object IslandModes {
         canvas.drawText(ellipsize(name, title, limit - textLeft), textLeft.toFloat(), (pill.top + 48).toFloat(), title)
         subtitle.color = 0x9EEBEBF5.toInt()
         subtitle.alpha = alpha
-        canvas.drawText(ellipsize(body, subtitle, pill.right - 18.5 - textLeft), textLeft.toFloat(), (pill.top + 70).toFloat(), subtitle)
+        val lines = wrapLines(body, subtitle, (limit - textLeft).toFloat(), 6)
+        var y = pill.top + 70.0
+        for (line in lines) {
+            if (y > pill.bottom - 10.0) break
+            canvas.drawText(line, textLeft.toFloat(), y.toFloat(), subtitle)
+            y += 18.0
+        }
     }
 
     private fun eventExpanded(canvas: Canvas, pill: DRect, name: String, detail: String, valueText: String, accent: Int, alpha: Int) {
@@ -541,6 +556,43 @@ internal object IslandModes {
             paint.alpha = alpha
             canvas.drawText(figure, cx - paint.measureText(figure) / 2f, cy - (paint.ascent() + paint.descent()) / 2f, paint)
         }
+    }
+
+    private var musicPhase = 0.0
+    private var musicStamp = Double.NaN
+
+    /** PlaybackState drives the meter. Paused holds the last bar pose. */
+    private fun musicClock(now: Double, playing: Boolean): Double {
+        if (!playing) {
+            musicStamp = Double.NaN
+            return musicPhase
+        }
+        if (!musicStamp.isNaN() && now >= musicStamp) musicPhase += now - musicStamp
+        musicStamp = now
+        return musicPhase
+    }
+
+    private fun wrapLines(text: String, paint: Paint, width: Float, max: Int): List<String> {
+        if (width < 8f || max <= 0 || text.isEmpty()) return emptyList()
+        val out = ArrayList<String>(max)
+        for (raw in text.split('\n')) {
+            var rest = raw.trim()
+            if (rest.isEmpty()) continue
+            while (rest.isNotEmpty() && out.size < max) {
+                if (paint.measureText(rest) <= width) {
+                    out.add(rest)
+                    break
+                }
+                var cut = rest.length
+                while (cut > 1 && paint.measureText(rest.substring(0, cut)) > width) cut--
+                val space = rest.lastIndexOf(' ', (cut - 1).coerceAtLeast(0))
+                val end = if (space > 0) space else cut
+                out.add(rest.substring(0, end).trimEnd())
+                rest = rest.substring(end).trimStart()
+            }
+            if (out.size >= max) break
+        }
+        return out
     }
 
     private fun meter(canvas: Canvas, rect: DRect, color: Int, bars: Int, bar: Float, gap: Float, now: Double, alpha: Int, playing: Boolean, twoTone: Boolean = false, envelope: Boolean = false) {

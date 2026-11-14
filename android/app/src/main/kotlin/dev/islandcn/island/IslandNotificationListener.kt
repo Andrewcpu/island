@@ -16,6 +16,10 @@ class IslandNotificationListener : NotificationListenerService() {
     private val messages = LinkedHashMap<String, Pair<String, String>>()
     private val missed = LinkedHashMap<String, String>()
     private val timers = LinkedHashMap<String, TimerNote>()
+    private val progressNotes = LinkedHashMap<String, ProgressNote>()
+    private val rides = LinkedHashMap<String, RideNote>()
+    private val statuses = LinkedHashMap<String, Pair<String, String>>()
+    private val calls = LinkedHashSet<String>()
 
     override fun onListenerConnected() {
         instance = this
@@ -39,12 +43,8 @@ class IslandNotificationListener : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         val key = sbn?.key ?: return
-        val removedMessage = messages.remove(key) != null
-        val removedTimer = timers.remove(key) != null
-        val removedMissed = missed.remove(key) != null
-        if (removedMessage) publishMessage()
-        if (removedTimer) publishTimer()
-        if (removedMissed) publishMissed()
+        releaseCall(key)
+        publishChanged(drop(key))
         val token = mediaToken(sbn.notification)
         if (token != null) {
             sessions.remove(token)?.unregisterCallback(mediaCallback)
@@ -55,27 +55,40 @@ class IslandNotificationListener : NotificationListenerService() {
     private fun handlePosted(sbn: StatusBarNotification) {
         if (sbn.packageName == packageName) return
         val notification = sbn.notification
+        val key = sbn.key
         val token = mediaToken(notification)
         if (token != null) {
+            releaseCall(key)
+            publishChanged(drop(key))
             publishMedia(token)
             return
         }
         if (isMissedCall(notification)) {
-            missed[sbn.key] = callerName(notification) ?: "Unknown"
+            releaseCall(key)
+            publishChanged(drop(key, keep = "missed"))
+            missed[key] = callerName(notification) ?: "Unknown"
             publishMissed()
             return
         }
         if (isCall(notification)) {
-            callerName(notification)?.let { IslandMonitors.noteCaller(this, it, (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0) }
+            publishChanged(drop(key))
+            calls.add(key)
+            val type = notification.extras.getInt(Notification.EXTRA_CALL_TYPE, -1)
+            val state = if (type == 2) "offhook" else "ringing"
+            val name = callerName(notification).orEmpty()
+            callerName(notification)?.let { IslandMonitors.noteCaller(this, it, state == "offhook") }
+            IslandOverlayService.onCall(this, state, name)
             return
         }
+        releaseCall(key)
         if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
         if (isTimer(sbn)) {
             val remaining = remaining(notification) ?: return
+            publishChanged(drop(key, keep = "timer"))
             val title = notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
             val label = if (title.isEmpty() || durationText(title)) "Timer" else title
             val paused = remaining.second
-            timers[sbn.key] = TimerNote(
+            timers[key] = TimerNote(
                 endsAt = if (paused) 0L else SystemClock.elapsedRealtime() + remaining.first,
                 frozen = if (paused) remaining.first else null,
                 paused = paused,
@@ -84,11 +97,83 @@ class IslandNotificationListener : NotificationListenerService() {
             publishTimer()
             return
         }
-        val message = messageOf(notification) ?: return
-        if (message.first.isEmpty() && message.second.isEmpty()) return
-        messages.remove(sbn.key)
-        messages[sbn.key] = message
-        publishMessage()
+        val message = liveMessage(notification)
+        if (message != null) {
+            publishChanged(drop(key, keep = "message"))
+            messages[key] = message
+            publishMessage()
+            return
+        }
+        val progress = liveProgress(notification)
+        if (progress != null) {
+            publishChanged(drop(key, keep = "progress"))
+            progressNotes[key] = progress
+            publishProgress()
+            return
+        }
+        val ride = liveRide(notification)
+        if (ride != null) {
+            publishChanged(drop(key, keep = "ride"))
+            rides[key] = ride
+            publishRide()
+            return
+        }
+        if (promoted(notification)) {
+            val title = textExtra(notification, Notification.EXTRA_TITLE)
+            val detail = textExtra(notification, Notification.EXTRA_TEXT).ifEmpty { textExtra(notification, Notification.EXTRA_SUB_TEXT) }
+            if (title.isEmpty() && detail.isEmpty()) {
+                publishChanged(drop(key))
+                return
+            }
+            publishChanged(drop(key, keep = "status"))
+            statuses[key] = title to detail
+            publishStatus()
+            return
+        }
+        publishChanged(drop(key))
+    }
+
+    private fun drop(key: String, keep: String? = null): Set<String> {
+        val changed = linkedSetOf<String>()
+        if (keep != "message" && messages.remove(key) != null) changed.add("message")
+        if (keep != "timer" && timers.remove(key) != null) changed.add("timer")
+        if (keep != "missed" && missed.remove(key) != null) changed.add("missed")
+        if (keep != "progress" && progressNotes.remove(key) != null) changed.add("progress")
+        if (keep != "ride" && rides.remove(key) != null) changed.add("ride")
+        if (keep != "status" && statuses.remove(key) != null) changed.add("status")
+        return changed
+    }
+
+    private fun releaseCall(key: String) {
+        if (!calls.remove(key)) return
+        if (calls.isEmpty() && !IslandMonitors.callActive()) IslandOverlayService.onCall(this, "idle", "")
+    }
+
+    private fun publishChanged(changed: Set<String>) {
+        if ("message" in changed) publishMessage()
+        if ("timer" in changed) publishTimer()
+        if ("missed" in changed) publishMissed()
+        if ("progress" in changed) publishProgress()
+        if ("ride" in changed) publishRide()
+        if ("status" in changed) publishStatus()
+    }
+
+    private fun publishProgress() {
+        val note = progressNotes.values.lastOrNull()
+        if (note == null) IslandOverlayService.onProgressCleared()
+        else IslandOverlayService.onProgress(this, note.title, note.detail, note.fraction, note.label)
+    }
+
+    private fun publishRide() {
+        val note = rides.values.lastOrNull()
+        if (note == null) IslandOverlayService.onRideCleared()
+        else IslandOverlayService.onRide(this, note.title, note.detail, note.value, note.delivery)
+    }
+
+    private fun publishStatus() {
+        val note = statuses.values.lastOrNull()
+        if (note == null) IslandOverlayService.onStatusCleared()
+        else IslandOverlayService.onStatus(this, note.first, note.second)
     }
 
     private fun publishMessage() {
@@ -181,8 +266,21 @@ class IslandNotificationListener : NotificationListenerService() {
     private fun isCall(notification: Notification): Boolean {
         if (notification.category == Notification.CATEGORY_CALL) return true
         if (callPerson(notification.extras)?.name != null) return true
+        if (notification.extras.containsKey(Notification.EXTRA_CALL_TYPE)) return true
         return false
     }
+
+    private fun live(notification: Notification): Boolean {
+        val flags = notification.flags
+        if (flags and Notification.FLAG_PROMOTED_ONGOING != 0) return true
+        if (flags and Notification.FLAG_ONGOING_EVENT != 0) return true
+        return false
+    }
+
+    private fun promoted(notification: Notification): Boolean = (notification.flags and Notification.FLAG_PROMOTED_ONGOING) != 0
+
+    private fun textExtra(notification: Notification, key: String): String =
+        notification.extras.getCharSequence(key)?.toString()?.trim().orEmpty()
 
     private fun callerName(notification: Notification): String? {
         val extras = notification.extras
@@ -226,24 +324,70 @@ class IslandNotificationListener : NotificationListenerService() {
         return null
     }
 
-    private fun messageOf(notification: Notification): Pair<String, String>? {
-        val messages = notification.extras.getParcelableArray(Notification.EXTRA_MESSAGES)
-        if (messages != null && messages.isNotEmpty()) {
-            val bundle = messages.lastOrNull() as? android.os.Bundle
-            val body = bundle?.getCharSequence("text")?.toString()?.trim().orEmpty()
-            val person = senderPerson(bundle)
-            val sender = person?.trim().orEmpty()
-                .ifEmpty { bundle?.getCharSequence("sender")?.toString()?.trim().orEmpty() }
-                .ifEmpty { notification.extras.getCharSequence("android.conversationTitle")?.toString()?.trim().orEmpty() }
-                .ifEmpty { notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty() }
-            if (sender.isEmpty() && body.isEmpty()) return null
-            return sender to body
+    /** MessagingStyle only when the notification itself is live or ongoing. Ordinary SMS stays out. */
+    private fun liveMessage(notification: Notification): Pair<String, String>? {
+        if (!live(notification)) return null
+        val bundles = notification.extras.getParcelableArray(Notification.EXTRA_MESSAGES)
+        val messaging = notification.category == Notification.CATEGORY_MESSAGE || !bundles.isNullOrEmpty()
+        if (!messaging) return null
+        val lines = ArrayList<String>()
+        if (bundles != null) {
+            for (item in bundles) {
+                val bundle = item as? android.os.Bundle ?: continue
+                val text = bundle.getCharSequence("text")?.toString()?.trim().orEmpty()
+                if (text.isNotEmpty()) lines.add(text)
+            }
         }
-        if (notification.category != Notification.CATEGORY_MESSAGE) return null
-        val sender = notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
-        val body = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
+        if (lines.isEmpty()) {
+            val big = textExtra(notification, Notification.EXTRA_BIG_TEXT)
+            val text = textExtra(notification, Notification.EXTRA_TEXT)
+            val body = big.ifEmpty { text }
+            if (body.isNotEmpty()) lines.add(body)
+        }
+        val body = lines.takeLast(4).joinToString("\n")
+        val last = bundles?.lastOrNull() as? android.os.Bundle
+        val sender = senderPerson(last)?.trim().orEmpty()
+            .ifEmpty { last?.getCharSequence("sender")?.toString()?.trim().orEmpty() }
+            .ifEmpty { textExtra(notification, Notification.EXTRA_CONVERSATION_TITLE) }
+            .ifEmpty { textExtra(notification, Notification.EXTRA_TITLE) }
         if (sender.isEmpty() && body.isEmpty()) return null
         return sender to body
+    }
+
+    private fun liveProgress(notification: Notification): ProgressNote? {
+        if (!live(notification)) return null
+        val extras = notification.extras
+        val max = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
+        val indeterminate = extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
+        val template = extras.getString(Notification.EXTRA_TEMPLATE).orEmpty()
+        val progressStyle = template.contains("ProgressStyle")
+        if (max <= 0 && !indeterminate && notification.category != Notification.CATEGORY_PROGRESS && !progressStyle) return null
+        val current = extras.getInt(Notification.EXTRA_PROGRESS, 0)
+        val fraction = if (max > 0) (current.toFloat() / max.toFloat()).coerceIn(0f, 1f) else 0f
+        val label = when {
+            max <= 0 || indeterminate -> "…"
+            fraction >= 1f -> "Done"
+            else -> "${(fraction * 100).toInt()}%"
+        }
+        val title = textExtra(notification, Notification.EXTRA_TITLE).ifEmpty { "Progress" }
+        val detail = textExtra(notification, Notification.EXTRA_TEXT).ifEmpty { textExtra(notification, Notification.EXTRA_SUB_TEXT) }
+        return ProgressNote(title, detail, fraction, label)
+    }
+
+    private fun liveRide(notification: Notification): RideNote? {
+        if (!live(notification)) return null
+        val category = notification.category
+        val navigation = category == Notification.CATEGORY_NAVIGATION || category == Notification.CATEGORY_LOCATION_SHARING
+        val transport = category == Notification.CATEGORY_TRANSPORT
+        if (!navigation && !transport) return null
+        val title = textExtra(notification, Notification.EXTRA_TITLE)
+        val detail = textExtra(notification, Notification.EXTRA_TEXT)
+        val sub = textExtra(notification, Notification.EXTRA_SUB_TEXT)
+        val blob = "$title $detail $sub"
+        val delivery = transport && blob.contains("deliver", ignoreCase = true)
+        val value = sub.ifEmpty { detail }.ifEmpty { title }
+        val name = title.ifEmpty { if (delivery) "Delivery" else "On the way" }
+        return RideNote(name, detail.ifEmpty { sub }, value, delivery)
     }
 
     private fun parseClock(text: String): Long? {
@@ -258,6 +402,8 @@ class IslandNotificationListener : NotificationListenerService() {
     private fun durationText(text: String): Boolean = CLOCK.containsMatchIn(text) && text.none { it.isLetter() }
 
     private data class TimerNote(val endsAt: Long, val frozen: Long?, val paused: Boolean, val label: String)
+    private data class ProgressNote(val title: String, val detail: String, val fraction: Float, val label: String)
+    private data class RideNote(val title: String, val detail: String, val value: String, val delivery: Boolean)
 
     companion object {
         private const val CHRONOMETER_COUNT_DOWN = "android.chronometerCountDown"

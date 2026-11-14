@@ -236,8 +236,13 @@ class IslandOverlayService : Service() {
         private var latestMessage: Pair<String, String>? = null
         private var latestMissed: String? = null
         private var latestTimer: TimerSnap? = null
+        private var latestProgress: ProgressSnap? = null
+        private var latestRide: RideSnap? = null
+        private var latestStatus: Pair<String, String>? = null
 
         private data class TimerSnap(val remainingMs: Long, val paused: Boolean, val label: String)
+        private data class ProgressSnap(val title: String, val detail: String, val fraction: Float, val label: String)
+        private data class RideSnap(val title: String, val detail: String, val value: String, val delivery: Boolean)
 
         @Volatile var instance: IslandOverlayService? = null
         @Volatile var useMic: Boolean = false
@@ -317,6 +322,36 @@ class IslandOverlayService : Service() {
             instance?.pill?.onLiveTimerCleared()
         }
 
+        fun onProgress(context: Context, title: String, detail: String, fraction: Float, label: String) {
+            latestProgress = ProgressSnap(title, detail, fraction, label)
+            deliver(context) { it.onLiveProgress(title, detail, fraction, label) }
+        }
+
+        fun onProgressCleared() {
+            latestProgress = null
+            instance?.pill?.onLiveProgressCleared()
+        }
+
+        fun onRide(context: Context, title: String, detail: String, value: String, delivery: Boolean) {
+            latestRide = RideSnap(title, detail, value, delivery)
+            deliver(context) { it.onLiveRide(title, detail, value, delivery) }
+        }
+
+        fun onRideCleared() {
+            latestRide = null
+            instance?.pill?.onLiveRideCleared()
+        }
+
+        fun onStatus(context: Context, title: String, detail: String) {
+            latestStatus = title to detail
+            deliver(context) { it.onLiveStatus(title, detail) }
+        }
+
+        fun onStatusCleared() {
+            latestStatus = null
+            instance?.pill?.onLiveStatusCleared()
+        }
+
         private fun deliver(context: Context, apply: (IslandPillView) -> Unit) {
             val service = instance
             val view = service?.pill
@@ -333,6 +368,9 @@ class IslandOverlayService : Service() {
             latestCall?.let { view.onLiveCall(it.first, it.second) }
             latestMessage?.let { view.onLiveMessage(it.first, it.second) }
             latestTimer?.let { view.onLiveTimer(it.remainingMs, it.paused, it.label) }
+            latestProgress?.let { view.onLiveProgress(it.title, it.detail, it.fraction, it.label) }
+            latestRide?.let { view.onLiveRide(it.title, it.detail, it.value, it.delivery) }
+            latestStatus?.let { view.onLiveStatus(it.first, it.second) }
         }
 
         fun dispatch(context: Context, name: String, args: Map<String, Any?>) {

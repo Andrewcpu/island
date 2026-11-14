@@ -236,6 +236,17 @@ internal class IslandRig {
         return visible().firstOrNull()?.id
     }
     val expanded: Boolean get() = kind == Kind.EXPANDED
+
+    /**
+     * What to draw while a split expands. The big pill keeps its compact size until the
+     * absorb springs have eased it in, so the layout does not snap to the expanded card.
+     */
+    fun look(): Kind {
+        if (kind != Kind.EXPANDED) return kind
+        if (height.pos <= 56.0 && bubbleHeight.pos >= 1.0) return Kind.MINIMAL
+        if (height.pos <= 56.0) return Kind.COMPACT
+        return Kind.EXPANDED
+    }
     val animating: Boolean get() = press != null || sched.isNotEmpty() || tracks().any { it.busy }
 
     val pill: DRect
@@ -656,10 +667,13 @@ internal class IslandRig {
     }
 
     private fun aim(transition: Transition, target: Shape, idle: Shape) {
+        // Long-press from a split absorbs the bubble: both pills ease toward the sensor on the
+        // swap springs, then size and corner radius open together (islandcn absorbExpand).
+        val absorbing = !reduced && transition == Transition.SWAP && bubbleHeight.pos >= 0.5 && target.bubbleHeight < 0.5
         val edge = motion(edgeSpring(transition))
         val body = motion(bodySpring(transition))
-        val corner = motion(cornerSpring(transition))
-        val via = if (reduced) 0.0 else via(transition)
+        val corner = if (absorbing) motion(Spring(0.49, 0.826)) else motion(cornerSpring(transition))
+        val via = if (reduced) 0.0 else if (absorbing) 0.222 else via(transition)
         val retarget = when (transition) {
             Transition.COLLAPSE -> motion(Spring(0.447, 1.0))
             Transition.ALERT_COLLAPSE -> motion(Spring(0.527, 0.837))
@@ -671,20 +685,30 @@ internal class IslandRig {
         }
         edgeAim(left, target.left, idle.left)
         edgeAim(right, target.right, idle.right)
-        val bodyHold = if (reduced) 0.0 else if (transition == Transition.SWAP) 0.223 else 0.0
+        val bodyHold = if (reduced) 0.0 else if (absorbing) 0.222 else if (transition == Transition.SWAP) 0.223 else 0.0
         top.aim(target.top, body, now, hold = bodyHold)
         height.aim(target.height, body, now, hold = bodyHold)
-        radius.aim(target.radius, corner, now, hold = if (reduced) 0.0 else cornerDelay(transition))
-        if (transition == Transition.SPLIT) {
+        val radiusHold = if (reduced) 0.0 else if (absorbing) 0.223 else cornerDelay(transition)
+        radius.aim(target.radius, corner, now, hold = radiusHold)
+        if (absorbing) {
+            val rest = bubbleHeight.pos
+            bubbleLeft.aim(idle.right - rest, motion(Spring(0.25, 1.0)), now)
+            bubbleRight.aim(idle.right, motion(Spring(0.42, 1.0)), now)
+            bubbleHeight.aim(0.0, MotionSpec.tween(0.0), now, hold = 0.222)
+        } else if (transition == Transition.SPLIT) {
             bubbleLeft.aim(target.bubbleLeft, motion(Spring(0.376, 0.811)), now, hold = if (reduced) 0.0 else 0.345)
-        } else if (via > 0 && (transition == Transition.UNSPLIT || transition == Transition.SPLIT)) {
+            if (via > 0) bubbleRight.aim(target.bubbleRight, edge, now, via = idle.bubbleRight, viaDelay = via, viaMotion = edge)
+            else bubbleRight.aim(target.bubbleRight, edge, now)
+            bubbleHeight.aim(target.bubbleHeight, body, now)
+        } else if (via > 0 && transition == Transition.UNSPLIT) {
             bubbleLeft.aim(target.bubbleLeft, edge, now, via = idle.bubbleLeft, viaDelay = via, viaMotion = edge)
+            bubbleRight.aim(target.bubbleRight, edge, now, via = idle.bubbleRight, viaDelay = via, viaMotion = edge)
+            bubbleHeight.aim(target.bubbleHeight, body, now)
         } else {
             bubbleLeft.aim(target.bubbleLeft, edge, now)
+            bubbleRight.aim(target.bubbleRight, edge, now)
+            bubbleHeight.aim(target.bubbleHeight, body, now)
         }
-        if (via > 0) bubbleRight.aim(target.bubbleRight, edge, now, via = idle.bubbleRight, viaDelay = via, viaMotion = edge)
-        else bubbleRight.aim(target.bubbleRight, edge, now)
-        bubbleHeight.aim(target.bubbleHeight, body, now)
         if (transition == Transition.COLLAPSE || transition == Transition.ALERT_COLLAPSE) scheduleTail(transition, target)
     }
 
@@ -735,8 +759,13 @@ internal class IslandRig {
 
     fun slotRects(): Triple<DRect?, DRect?, DRect?> {
         val shown = visible()
-        val first = shown.firstOrNull() ?: return Triple(null, null, null)
-        val targetKind = kind
+        val look = look()
+        val first = if (look == Kind.COMPACT && kind == Kind.EXPANDED) {
+            shown.find { it.id == expandedId } ?: shown.firstOrNull()
+        } else {
+            shown.firstOrNull()
+        } ?: return Triple(null, null, null)
+        val targetKind = look
         val shape = shape(targetKind, measure())
         val pill = DRect(centerX + shape.left, shape.top, centerX + shape.right, shape.top + shape.height)
         val glyph = min(22.0, max(8.0, pill.height - 8))

@@ -199,6 +199,8 @@ object IslandMonitors {
         if (host != null) IslandOverlayService.onCall(host, name, if (name == "idle") "" else callerLabel)
     }
 
+    fun callActive(): Boolean = callState == "ringing" || callState == "offhook"
+
     fun noteCaller(context: Context, raw: String?, ongoing: Boolean) {
         phoneContext = phoneContext ?: context.applicationContext
         if (callState == "idle") {

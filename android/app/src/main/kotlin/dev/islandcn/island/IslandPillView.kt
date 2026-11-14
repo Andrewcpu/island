@@ -45,6 +45,9 @@ class IslandPillView(context: Context) : View(context) {
     private var liveCall = false
     private var liveMessage = false
     private var liveTimer = false
+    private var liveProgress = false
+    private var liveRide = false
+    private var liveStatus = false
     private var callerLabel = ""
     private var timerSpan = 5 * 60 * 1000L
     private var timerEnds = 0L
@@ -175,7 +178,7 @@ class IslandPillView(context: Context) : View(context) {
         if (sample == "message") sample = null
         val existing = faces["message"]
         if (existing != null && existing.title == title && existing.detail == text) return
-        present(face("message", "message", "", "", title, text, "", Color.WHITE, -1f, 48.0, 80), alert = existing == null)
+        present(face("message", "message", "", "", title, text, "", Color.WHITE, -1f, IslandModes.messageBody(text), 80), alert = existing == null)
     }
 
     fun onLiveMessageCleared() {
@@ -209,6 +212,65 @@ class IslandPillView(context: Context) : View(context) {
             return
         }
         present(face("timer", "timer", "", text, caption, if (paused) "Paused" else caption, text, 0xFFFF9F0A.toInt(), left.toFloat() / timerSpan.coerceAtLeast(1L), 50.0, 50))
+    }
+
+    fun onLiveProgress(title: String, detail: String, fraction: Float, label: String) {
+        liveProgress = true
+        if (sample == "upload") return
+        val name = title.trim().ifBlank { "Progress" }
+        val text = detail.trim()
+        val existing = faces["upload"]
+        if (existing != null && existing.title == name && existing.detail == text && existing.value == label && existing.progress == fraction) return
+        present(face("upload", "upload", "", label, name, text, label, 0xFF0A84FF.toInt(), fraction.coerceIn(0f, 1f), 48.0, 30))
+    }
+
+    fun onLiveProgressCleared() {
+        liveProgress = false
+        if (sample == "upload") return
+        if (faces.remove("upload") != null) {
+            rig.end("upload")
+            kick()
+        }
+    }
+
+    fun onLiveRide(title: String, detail: String, value: String, delivery: Boolean) {
+        liveRide = true
+        if (sample == "delivery" || sample == "ride") return
+        val name = title.trim().ifBlank { if (delivery) "Delivery" else "On the way" }
+        val text = detail.trim()
+        val whenText = value.trim().ifBlank { text }.ifBlank { name }
+        val accent = if (delivery) 0xFFFFD60A.toInt() else 0xFF32D74B.toInt()
+        val glyph = if (delivery) "box" else "car"
+        val existing = faces["eta"]
+        if (existing != null && existing.title == name && existing.detail == text && existing.value == whenText && existing.glyph == glyph) return
+        present(face("eta", glyph, "", whenText, name, text, whenText, accent, -1f, 132.0, 25))
+    }
+
+    fun onLiveRideCleared() {
+        liveRide = false
+        if (sample == "delivery" || sample == "ride") return
+        if (faces.remove("eta") != null) {
+            rig.end("eta")
+            kick()
+        }
+    }
+
+    fun onLiveStatus(title: String, detail: String) {
+        liveStatus = true
+        val name = title.trim()
+        val text = detail.trim()
+        if (name.isEmpty() && text.isEmpty()) return
+        val existing = faces["live"]
+        if (existing != null && existing.title == name && existing.detail == text) return
+        present(face("live", "screen", "", text, name, text, "", Color.WHITE, -1f, 48.0, 15))
+    }
+
+    fun onLiveStatusCleared() {
+        liveStatus = false
+        if (faces.remove("live") != null) {
+            rig.end("live")
+            kick()
+        }
     }
 
     fun onLiveTimerCleared() {
@@ -437,9 +499,10 @@ class IslandPillView(context: Context) : View(context) {
         val bubblePath = bubble?.let { continuousRect(it, it.height / 2, 0.72) }
         if (bubblePath != null) canvas.drawPath(bubblePath, black)
         if (bubble != null) canvas.drawPath(bridgeNeck(pill, bubble), black)
-        if (rig.showKeyline && rig.kind != Kind.IDLE) {
+        val shown = rig.look()
+        if (rig.showKeyline && shown != Kind.IDLE) {
             val extra = ((pill.width - rig.sensor.width) / 6.0).coerceIn(0.0, 1.0)
-            keyline.alpha = (0.16 * extra * (if (rig.kind == Kind.EXPANDED) 0.93 else 1.0) * 255).toInt()
+            keyline.alpha = (0.16 * extra * (if (shown == Kind.EXPANDED) 0.93 else 1.0) * 255).toInt()
             if (keyline.alpha > 2) {
                 canvas.drawPath(shell, keyline)
                 if (bubblePath != null) canvas.drawPath(bubblePath, keyline)
@@ -451,8 +514,14 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     private fun drawContent(canvas: Canvas, pill: DRect, bubble: DRect?) {
-        val face = faces[rig.shownId()] ?: return
-        if (rig.kind == Kind.IDLE) return
+        val look = rig.look()
+        val faceId = when (look) {
+            Kind.EXPANDED -> rig.shownId()
+            Kind.COMPACT -> if (rig.expanded) rig.shownId() else rig.primary?.id
+            else -> rig.primary?.id
+        }
+        val face = faces[faceId] ?: return
+        if (look == Kind.IDLE) return
         val reveal = reveal()
         if (reveal <= 0f) return
         val slots = rig.slotRects()
@@ -466,21 +535,25 @@ class IslandPillView(context: Context) : View(context) {
         val elapsed = if (track != null) clock(live) else ""
         val remaining = if (track != null && duration > 0L) "−${clock((duration - live).coerceAtLeast(0))}" else ""
         val progress = if (track != null && duration > 0L) (live.toFloat() / duration).coerceIn(0f, 1f) else face.progress
+        val musicPlaying = if (face.id == "now-playing") track?.playing == true || (track == null && face.value == "Playing") else false
         IslandModes.draw(
             canvas, face.id, face.title, face.detail, face.value, face.trail, face.accent, progress,
-            face.glyph, elapsed, remaining, rig.kind, pill, rig.hole, slots.first, slots.second, rig.now, hits, alpha,
+            face.glyph, elapsed, remaining, look, pill, rig.hole, slots.first, slots.second, rig.now, hits, alpha,
             art = track?.art,
+            playing = musicPlaying,
         )
         canvas.restore()
         val second = faces[rig.secondary?.id]
-        if (second != null && bubble != null && rig.kind == Kind.MINIMAL) {
+        if (second != null && bubble != null && look == Kind.MINIMAL) {
             val bubbleClip = continuousRect(bubble, bubble.height / 2, 0.72)
             canvas.save()
             canvas.clipPath(bubbleClip)
+            val bubblePlaying = second.id == "now-playing" && (mediaTrack?.playing == true || (mediaTrack == null && second.value == "Playing"))
             IslandModes.drawBubble(
                 canvas, second.id, second.accent, second.progress, bubble, rig.now, alpha,
                 art = if (second.id == "now-playing") mediaTrack?.art else null,
                 mark = second.glyph,
+                playing = bubblePlaying,
             )
             canvas.restore()
         }
@@ -699,6 +772,8 @@ class IslandPillView(context: Context) : View(context) {
         "call" -> liveCall
         "message" -> liveMessage
         "timer" -> liveTimer
+        "upload" -> liveProgress
+        "delivery", "ride" -> liveRide
         else -> false
     }
 
@@ -708,6 +783,9 @@ class IslandPillView(context: Context) : View(context) {
             if (liveCall) add("call")
             if (liveMessage) add("message")
             if (liveTimer) add("timer")
+            if (liveProgress) add("upload")
+            if (liveRide) add("eta")
+            if (liveStatus) add("live")
         }
         if (sample?.startsWith("record") == true) releaseMic()
         sample = null
