@@ -274,14 +274,39 @@ internal class IslandRig {
         get() = DRect(centerX + left.pos, top.pos, centerX + right.pos, top.pos + height.pos)
 
     /**
-     * One drawing stage for every kind. It covers the expanded island, the split
-     * bubble, and the press shadow, and it does not follow the spring.
+     * The window for the pill that will be on screen: the resting shape, not the
+     * live spring. A split includes only the two pills. Expanded adds the drop shadow.
      */
-    fun stage(): DRect {
-        val half = (min(screenWidth, 402.0) - 2 * 13.83) / 2
-        val pad = 40.0
-        val topEdge = min(expandedTop, topInset)
-        return DRect(centerX - half - pad, topEdge - pad, centerX + half + pad, topEdge + 180.0 + pad + 16.0)
+    fun windowBounds(): DRect {
+        if (!::left.isInitialized) return pill
+        val shape = shape(kind, measure())
+        val topEdge = shape.top
+        val body = scaledAbout(
+            DRect(centerX + shape.left, topEdge, centerX + shape.right, topEdge + shape.height),
+            max(1.0, pillScale.goal),
+        )
+        val lobe = if (shape.bubbleHeight >= 1.0) {
+            scaledAbout(
+                DRect(centerX + shape.bubbleLeft, topEdge, centerX + shape.bubbleRight, topEdge + shape.bubbleHeight),
+                max(1.0, bubbleScale.goal),
+            )
+        } else {
+            null
+        }
+        val box = if (lobe == null) {
+            body
+        } else {
+            DRect(min(body.left, lobe.left), min(body.top, lobe.top), max(body.right, lobe.right), max(body.bottom, lobe.bottom))
+        }
+        val shadow = if (kind == Kind.EXPANDED) 8.0 else 0.0
+        return DRect(box.left - 2.0, box.top - 2.0, box.right + 2.0, box.bottom + 2.0 + shadow)
+    }
+
+    private fun scaledAbout(rect: DRect, scale: Double): DRect {
+        if (scale == 1.0) return rect
+        val w = rect.width * scale
+        val h = rect.height * scale
+        return DRect(rect.centerX - w / 2, rect.centerY - h / 2, rect.centerX + w / 2, rect.centerY + h / 2)
     }
 
     /** Resting pill and bubble, padded. Stable while a spring is running. */

@@ -12,6 +12,7 @@ import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -907,23 +908,47 @@ class IslandPillView(context: Context) : View(context) {
     private var revealAt = 0.0
     private var revealKind = Kind.IDLE
 
+    /** Held for a whole spring so the window does not follow subpixel edges. */
+    private var latch: DRect? = null
+
     private fun publish() {
         if (rig.kind != revealKind) {
             val absorb = rig.absorbLive
             revealKind = rig.kind
             if (!absorb) revealAt = rig.now
         }
-        // One window, placed once around the camera. Expand and collapse draw inside
-        // it, so the origin never follows the spring and the card is not clipped.
-        val box = rig.stage()
-        val left = floor(box.left * density).toInt()
-        val top = floor(box.top * density).toInt()
-        val right = ceil(box.right * density).toInt()
-        val bottom = ceil(box.bottom * density).toInt()
+        // The window is the settled pill. It changes when the target changes, not
+        // on every spring sample, and a running spring keeps the larger of the two
+        // so the drawing is never clipped and the center does not step.
+        val target = rig.windowBounds()
+        val cover = if (rig.animating) {
+            val held = latch
+            if (held == null) latch = union(target, drawnBounds())
+            else if (!encloses(held, target)) latch = union(held, target)
+            latch ?: target
+        } else {
+            latch = null
+            target
+        }
+        val top = floor(cover.top * density).toInt()
+        val bottom = ceil(cover.bottom * density).toInt()
+        val height = (bottom - top).coerceAtLeast(1)
+        val left: Int
+        val width: Int
+        val leftExtent = rig.centerX - cover.left
+        val rightExtent = cover.right - rig.centerX
+        if (abs(rightExtent - leftExtent) > 1.0) {
+            left = floor(cover.left * density).toInt()
+            val right = ceil(cover.right * density).toInt()
+            width = (right - left).coerceAtLeast(1)
+        } else {
+            val camX = Math.round(rig.centerX * density).toInt()
+            val halfW = ceil(max(camX - cover.left * density, cover.right * density - camX)).toInt().coerceAtLeast(1)
+            left = camX - halfW
+            width = halfW * 2
+        }
         originX = left
         originY = top
-        val width = (right - left).coerceAtLeast(1)
-        val height = (bottom - top).coerceAtLeast(1)
         if (left == appliedL && top == appliedT && width == appliedW && height == appliedH) return
         appliedL = left
         appliedT = top
@@ -931,6 +956,19 @@ class IslandPillView(context: Context) : View(context) {
         appliedH = height
         onWindow?.invoke(left, top, width, height)
     }
+
+    private fun drawnBounds(): DRect {
+        val pill = scaled(rig.pill, max(1.0, rig.pillScale.pos))
+        val bubble = rig.bubble?.let { scaled(it, max(1.0, rig.bubbleScale.pos)) }
+        val box = if (bubble == null) pill else union(pill, bubble)
+        val shadow = if (rig.kind == Kind.EXPANDED) 8.0 else 0.0
+        return DRect(box.left - 2.0, box.top - 2.0, box.right + 2.0, box.bottom + 2.0 + shadow)
+    }
+
+    private fun union(a: DRect, b: DRect) = DRect(min(a.left, b.left), min(a.top, b.top), max(a.right, b.right), max(a.bottom, b.bottom))
+
+    private fun encloses(outer: DRect, inner: DRect) =
+        outer.left <= inner.left + 0.05 && outer.top <= inner.top + 0.05 && outer.right >= inner.right - 0.05 && outer.bottom >= inner.bottom - 0.05
 
     private fun boundsDp(): DRect {
         val pill = scaled(rig.pill, rig.pillScale.pos)
