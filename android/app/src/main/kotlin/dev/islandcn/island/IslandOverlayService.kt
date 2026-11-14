@@ -84,7 +84,12 @@ class IslandOverlayService : Service() {
         view.bindCutout()
         val frame = view.windowFrame()
         val params = layoutParams(frame[2], frame[3]).apply {
-            x = frame[0]
+            gravity = if (view.windowCentered && view.screenPx > 0) {
+                Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            } else {
+                Gravity.TOP or Gravity.LEFT
+            }
+            x = if (view.windowCentered && view.screenPx > 0) view.cameraPx - view.screenPx / 2 else frame[0]
             y = frame[1]
         }
         val manager = window ?: return
@@ -127,7 +132,7 @@ class IslandOverlayService : Service() {
                 WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT,
         ).apply {
-            gravity = Gravity.TOP or Gravity.LEFT
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             }
@@ -145,11 +150,15 @@ class IslandOverlayService : Service() {
         val params = view.layoutParams as? WindowManager.LayoutParams ?: return
         val nextW = width.coerceAtLeast(1)
         val nextH = height.coerceAtLeast(1)
-        val nextX = left
+        val pill = view as? IslandPillView
+        val centered = pill != null && pill.windowCentered && pill.screenPx > 0
+        // Centered windows keep a stable x. Width changes stay on the camera;
+        // writing a new absolute left here is what threw the pill off after the spring.
+        val nextX = if (centered && pill != null) pill.cameraPx - pill.screenPx / 2 else left
         val nextY = top - shiftY
-        // Never park the island at the origin. A settle frame must keep the camera rect.
-        if (nextX == 0 && nextY == 0 && appliedX != Int.MIN_VALUE && (appliedX != 0 || appliedY != 0)) return
-        if (appliedX == nextX && appliedY == nextY && appliedW == nextW && appliedH == nextH) return
+        val nextGravity = if (centered) Gravity.TOP or Gravity.CENTER_HORIZONTAL else Gravity.TOP or Gravity.LEFT
+        if (params.gravity == nextGravity && appliedX == nextX && appliedY == nextY && appliedW == nextW && appliedH == nextH) return
+        params.gravity = nextGravity
         params.x = nextX
         params.y = nextY
         params.width = nextW

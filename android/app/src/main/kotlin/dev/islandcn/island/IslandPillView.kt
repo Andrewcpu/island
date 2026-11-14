@@ -25,6 +25,15 @@ import kotlin.math.min
 class IslandPillView(context: Context) : View(context) {
     var onWindow: ((left: Int, top: Int, width: Int, height: Int) -> Unit)? = null
 
+    /** Display width in px, from the same metrics as the camera. */
+    internal var screenPx: Int = 0
+
+    /** Camera center in px. */
+    internal var cameraPx: Int = 0
+
+    /** The window is symmetric about the camera, so its left is derived from its width. */
+    internal var windowCentered: Boolean = true
+
     private val density = resources.displayMetrics.density
     private val rig = IslandRig()
     private val faces = linkedMapOf<String, Face>()
@@ -103,10 +112,12 @@ class IslandPillView(context: Context) : View(context) {
         val window = context.getSystemService(WindowManager::class.java) ?: return
         val metrics = window.currentWindowMetrics
         val bounds = metrics.bounds
+        screenPx = bounds.width()
         val cutouts = metrics.windowInsets.displayCutout?.boundingRects.orEmpty().map { rect ->
             DRect(rect.left / density.toDouble(), rect.top / density.toDouble(), rect.right / density.toDouble(), rect.bottom / density.toDouble())
         }
         rig.bindHole(bounds.width() / density.toDouble(), bounds.height() / density.toDouble(), cutouts)
+        cameraPx = Math.round(rig.centerX * density).toInt()
         publish()
         kick()
     }
@@ -462,9 +473,8 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val origin = screenOrigin()
-        val x = (event.x + origin[0]) / density.toDouble()
-        val y = (event.y + origin[1]) / density.toDouble()
+        val x = (event.x + anchorX()) / density.toDouble()
+        val y = (event.y + originY) / density.toDouble()
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 val bubble = rig.bubble
@@ -509,10 +519,9 @@ class IslandPillView(context: Context) : View(context) {
         val pill = rig.pill
         if (pill.width < 1 || pill.height < 1) return
         canvas.save()
-        // Screen position of this view, not the origin we last requested. A window
-        // resize that has not landed yet cannot slide the pill off the camera.
-        val origin = screenOrigin()
-        canvas.translate(-origin[0], -origin[1])
+        // The window is centered on the camera. Place screen-space dp at the center
+        // of whatever width is actually being drawn, so a settle resize cannot slide the pill.
+        canvas.translate(-anchorX(), -originY.toFloat())
         canvas.scale(density, density)
         val expand = ((pill.height - 36.85) / (84.0 - 36.85)).coerceIn(0.0, 1.0)
         canvas.drawPath(continuousRect(rig.sensor, rig.sensor.height / 2, 0.72), black)
@@ -916,29 +925,17 @@ class IslandPillView(context: Context) : View(context) {
 
     /** Held for a whole spring so the window does not follow subpixel edges. */
     private var latch: DRect? = null
-    private val screenLoc = IntArray(2)
-    /** Last screen position that matched the window we asked for. A 0,0 layout pass must not replace it. */
-    private var confirmedX = Int.MIN_VALUE
-    private var confirmedY = Int.MIN_VALUE
 
     /**
-     * Draw and hit-test from the camera window, not from a layout pass that
-     * reports 0,0 while a resize is in flight.
+     * Left edge of this frame, in px. A centered window gets it from the width
+     * on screen, matching CENTER_HORIZONTAL, instead of a left stored earlier.
      */
-    private fun screenOrigin(): FloatArray {
-        val requestedX = originX.toFloat()
-        val requestedY = originY.toFloat()
-        if (!isAttachedToWindow) return floatArrayOf(requestedX, requestedY)
-        getLocationOnScreen(screenLoc)
-        val sx = screenLoc[0]
-        val sy = screenLoc[1]
-        val zeroed = sx == 0 && sy == 0 && (originX != 0 || originY != 0)
-        if (!zeroed && abs(sx - originX) <= 4 && abs(sy - originY) <= 4) {
-            confirmedX = sx
-            confirmedY = sy
+    private fun anchorX(): Float {
+        if (windowCentered && screenPx > 0 && width > 0) {
+            val xAdj = cameraPx - screenPx / 2
+            return ((screenPx - width) / 2 + xAdj).toFloat()
         }
-        if (confirmedX == Int.MIN_VALUE) return floatArrayOf(requestedX, requestedY)
-        return floatArrayOf(confirmedX.toFloat(), confirmedY.toFloat())
+        return originX.toFloat()
     }
 
     private fun publish() {
@@ -977,12 +974,8 @@ class IslandPillView(context: Context) : View(context) {
             left = camX - halfW
             width = halfW * 2
         }
-        val camX = Math.round(rig.centerX * density).toInt()
-        val centered = abs(rightExtent - leftExtent) <= 1.0
-        val zeroed = left == 0 && top == 0
-        val offCamera = centered && abs(left + width / 2 - camX) > 2
-        // A zeroed layout pass is not a window position. Keep the camera rect.
-        if (camX > 8 && (zeroed || offCamera) && appliedL != Int.MIN_VALUE) return
+        cameraPx = Math.round(rig.centerX * density).toInt()
+        windowCentered = abs(rightExtent - leftExtent) <= 1.0
         originX = left
         originY = top
         if (left == appliedL && top == appliedT && width == appliedW && height == appliedH) return
