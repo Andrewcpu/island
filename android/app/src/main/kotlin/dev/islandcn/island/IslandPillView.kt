@@ -476,41 +476,96 @@ class IslandPillView(context: Context) : View(context) {
         canvas.save()
         canvas.translate(-originX.toFloat(), -originY.toFloat())
         canvas.scale(density, density)
-        val scale = rig.scale.pos.toFloat()
-        val cx = pill.centerX.toFloat()
-        val cy = pill.centerY.toFloat()
-        canvas.save()
-        canvas.translate(cx, cy)
-        canvas.scale(scale, scale)
-        canvas.translate(-cx, -cy)
         val expand = ((pill.height - 36.85) / (84.0 - 36.85)).coerceIn(0.0, 1.0)
-        if (expand > 0.02) {
-            shadow.alpha = (90 * expand).toInt()
-            canvas.save()
-            canvas.translate(0f, (8.0 * expand).toFloat())
-            canvas.drawPath(continuousRect(pill, min(rig.radius.pos, pill.height / 2), 0.72), shadow)
-            canvas.restore()
-        }
-        val sensor = continuousRect(rig.sensor, rig.sensor.height / 2, 0.72)
+        canvas.drawPath(continuousRect(rig.sensor, rig.sensor.height / 2, 0.72), black)
         val shell = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
-        canvas.drawPath(sensor, black)
-        canvas.drawPath(shell, black)
         val bubble = rig.bubble
-        val bubblePath = bubble?.let { continuousRect(it, it.height / 2, 0.72) }
-        if (bubblePath != null) canvas.drawPath(bubblePath, black)
-        if (bubble != null) canvas.drawPath(bridgeNeck(pill, bubble), black)
+        val swallowed = bubble != null && bubble.left < pill.right - 0.4
+        val shownBubble = if (swallowed) null else bubble
+        around(canvas, pill, rig.pillScale.pos.toFloat()) {
+            if (expand > 0.02) {
+                shadow.alpha = (90 * expand).toInt()
+                canvas.save()
+                canvas.translate(0f, (8.0 * expand).toFloat())
+                canvas.drawPath(shell, shadow)
+                canvas.restore()
+            }
+            canvas.drawPath(shell, black)
+        }
+        val bubblePath = shownBubble?.let { continuousRect(it, it.height / 2, 0.72) }
+        if (shownBubble != null && bubblePath != null) {
+            around(canvas, shownBubble, rig.bubbleScale.pos.toFloat()) {
+                canvas.drawPath(bubblePath, black)
+            }
+        }
+        val neckGap = if (rig.tightNeck()) 0.01 else 5.0
+        if (shownBubble != null) canvas.drawPath(bridgeNeck(pill, shownBubble, neckGap), black)
         val shown = rig.look()
         if (rig.showKeyline && shown != Kind.IDLE) {
             val extra = ((pill.width - rig.sensor.width) / 6.0).coerceIn(0.0, 1.0)
             keyline.alpha = (0.16 * extra * (if (shown == Kind.EXPANDED) 0.93 else 1.0) * 255).toInt()
             if (keyline.alpha > 2) {
-                canvas.drawPath(shell, keyline)
-                if (bubblePath != null) canvas.drawPath(bubblePath, keyline)
+                around(canvas, pill, rig.pillScale.pos.toFloat()) { canvas.drawPath(shell, keyline) }
+                if (shownBubble != null && bubblePath != null) {
+                    around(canvas, shownBubble, rig.bubbleScale.pos.toFloat()) { canvas.drawPath(bubblePath, keyline) }
+                }
             }
         }
+        if (rig.absorbLive) drawAbsorb(canvas, pill, shownBubble) else drawContent(canvas, pill, shownBubble)
         canvas.restore()
-        drawContent(canvas, pill, bubble)
+    }
+
+    private fun around(canvas: Canvas, rect: DRect, scale: Float, draw: () -> Unit) {
+        if (scale == 1f) {
+            draw()
+            return
+        }
+        canvas.save()
+        canvas.translate(rect.centerX.toFloat(), rect.centerY.toFloat())
+        canvas.scale(scale, scale)
+        canvas.translate(-rect.centerX.toFloat(), -rect.centerY.toFloat())
+        draw()
         canvas.restore()
+    }
+
+    /**
+     * Split expand from islandcn: the detached pill's content is cut before the join, the attached
+     * pill's content fades as that pill contracts, and the expanded text is drawn in the resting
+     * card so it only shows once the growing pill reaches it.
+     */
+    private fun drawAbsorb(canvas: Canvas, pill: DRect, bubble: DRect?) {
+        val exit = (rig.exitAlpha() * 255).toInt()
+        if (exit > 2 && rig.look() != Kind.EXPANDED) {
+            val primary = faces[rig.primary?.id]
+            if (primary != null) {
+                val look = if (bubble != null) Kind.MINIMAL else Kind.COMPACT
+                paintFace(canvas, primary, look, pill, exit, clip = true)
+            }
+        }
+        val second = faces[rig.secondary?.id]
+        if (second != null && bubble != null && !rig.bubbleContentGone()) {
+            val bubbleClip = continuousRect(bubble, bubble.height / 2, 0.72)
+            canvas.save()
+            canvas.clipPath(bubbleClip)
+            IslandModes.drawBubble(
+                canvas, second.id, second.accent, second.progress, bubble, rig.now, 255,
+                art = if (second.id == "now-playing") mediaTrack?.art else null,
+                mark = second.glyph,
+                playing = second.id == "now-playing" && (mediaTrack?.playing == true || (mediaTrack == null && second.value == "Playing")),
+            )
+            canvas.restore()
+        }
+        val enter = (rig.enterAlpha() * 255).toInt()
+        val opened = faces[rig.shownId()]
+        if (opened != null && enter > 2) {
+            val rest = rig.restingExpanded()
+            val clip = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
+            canvas.save()
+            canvas.clipPath(clip)
+            canvas.clipPath(continuousRect(rest, min(47.9, min(rest.width, rest.height) / 2), 0.72))
+            paintFace(canvas, opened, Kind.EXPANDED, rest, enter, clip = false)
+            canvas.restore()
+        }
     }
 
     private fun drawContent(canvas: Canvas, pill: DRect, bubble: DRect?) {
@@ -524,38 +579,25 @@ class IslandPillView(context: Context) : View(context) {
         if (look == Kind.IDLE) return
         val reveal = reveal()
         if (reveal <= 0f) return
-        val slots = rig.slotRects()
-        val clip = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
-        canvas.save()
-        canvas.clipPath(clip)
         val alpha = (reveal * 255).toInt()
-        val track = if (face.id == "now-playing") mediaTrack else null
-        val live = if (track != null) IslandMedia.livePosition(track) else mediaPosition
-        val duration = track?.duration ?: mediaDuration
-        val elapsed = if (track != null) clock(live) else ""
-        val remaining = if (track != null && duration > 0L) "−${clock((duration - live).coerceAtLeast(0))}" else ""
-        val progress = if (track != null && duration > 0L) (live.toFloat() / duration).coerceIn(0f, 1f) else face.progress
-        val musicPlaying = if (face.id == "now-playing") track?.playing == true || (track == null && face.value == "Playing") else false
-        IslandModes.draw(
-            canvas, face.id, face.title, face.detail, face.value, face.trail, face.accent, progress,
-            face.glyph, elapsed, remaining, look, pill, rig.hole, slots.first, slots.second, rig.now, hits, alpha,
-            art = track?.art,
-            playing = musicPlaying,
-        )
-        canvas.restore()
+        around(canvas, pill, rig.pillScale.pos.toFloat()) {
+            paintFace(canvas, face, look, pill, alpha, clip = true, slots = rig.slotRects())
+        }
         val second = faces[rig.secondary?.id]
-        if (second != null && bubble != null && look == Kind.MINIMAL) {
-            val bubbleClip = continuousRect(bubble, bubble.height / 2, 0.72)
-            canvas.save()
-            canvas.clipPath(bubbleClip)
-            val bubblePlaying = second.id == "now-playing" && (mediaTrack?.playing == true || (mediaTrack == null && second.value == "Playing"))
-            IslandModes.drawBubble(
-                canvas, second.id, second.accent, second.progress, bubble, rig.now, alpha,
-                art = if (second.id == "now-playing") mediaTrack?.art else null,
-                mark = second.glyph,
-                playing = bubblePlaying,
-            )
-            canvas.restore()
+        if (second != null && bubble != null && look == Kind.MINIMAL && !rig.bubbleContentGone()) {
+            around(canvas, bubble, rig.bubbleScale.pos.toFloat()) {
+                val bubbleClip = continuousRect(bubble, bubble.height / 2, 0.72)
+                canvas.save()
+                canvas.clipPath(bubbleClip)
+                val bubblePlaying = second.id == "now-playing" && (mediaTrack?.playing == true || (mediaTrack == null && second.value == "Playing"))
+                IslandModes.drawBubble(
+                    canvas, second.id, second.accent, second.progress, bubble, rig.now, alpha,
+                    art = if (second.id == "now-playing") mediaTrack?.art else null,
+                    mark = second.glyph,
+                    playing = bubblePlaying,
+                )
+                canvas.restore()
+            }
         }
     }
 
@@ -840,8 +882,9 @@ class IslandPillView(context: Context) : View(context) {
 
     private fun publish() {
         if (rig.kind != revealKind) {
+            val absorb = rig.absorbLive
             revealKind = rig.kind
-            revealAt = rig.now
+            if (!absorb) revealAt = rig.now
         }
         val union = boundsDp()
         val left = floor(union.left * density).toInt() - 2
@@ -861,17 +904,55 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     private fun boundsDp(): DRect {
-        val pill = scaled(rig.pill)
-        val bubble = rig.bubble?.let { scaled(it) }
+        val pill = scaled(rig.pill, rig.pillScale.pos)
+        val bubble = rig.bubble?.let { scaled(it, rig.bubbleScale.pos) }
         if (bubble == null) return pill
         return DRect(min(pill.left, bubble.left), min(pill.top, bubble.top), max(pill.right, bubble.right), max(pill.bottom, bubble.bottom))
     }
 
-    private fun scaled(rect: DRect): DRect {
-        val scale = rig.scale.pos
+    private fun scaled(rect: DRect, scale: Double): DRect {
         val w = rect.width * scale
         val h = rect.height * scale
         return DRect(rect.centerX - w / 2, rect.centerY - h / 2, rect.centerX + w / 2, rect.centerY + h / 2)
+    }
+
+    private fun paintFace(
+        canvas: Canvas,
+        face: Face,
+        look: Kind,
+        pill: DRect,
+        alpha: Int,
+        clip: Boolean,
+        elapsed: String? = null,
+        remaining: String? = null,
+        progress: Float? = null,
+        playing: Boolean? = null,
+        slots: Triple<DRect?, DRect?, DRect?>? = null,
+    ) {
+        val track = if (face.id == "now-playing") mediaTrack else null
+        val live = if (track != null) IslandMedia.livePosition(track) else mediaPosition
+        val duration = track?.duration ?: mediaDuration
+        val shownElapsed = elapsed ?: if (track != null) clock(live) else ""
+        val shownRemaining = remaining ?: if (track != null && duration > 0L) "−${clock((duration - live).coerceAtLeast(0))}" else ""
+        val shownProgress = progress ?: if (track != null && duration > 0L) (live.toFloat() / duration).coerceIn(0f, 1f) else face.progress
+        val musicPlaying = playing ?: (face.id == "now-playing" && (track?.playing == true || (track == null && face.value == "Playing")))
+        val ears = if (look == Kind.EXPANDED) slots else slots ?: rig.slotRects()
+        val draw = {
+            IslandModes.draw(
+                canvas, face.id, face.title, face.detail, face.value, face.trail, face.accent, shownProgress,
+                face.glyph, shownElapsed, shownRemaining, look, pill, rig.hole, ears?.first, ears?.second, rig.now, hits, alpha,
+                art = track?.art,
+                playing = musicPlaying,
+            )
+        }
+        if (!clip) {
+            draw()
+            return
+        }
+        canvas.save()
+        canvas.clipPath(continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72))
+        draw()
+        canvas.restore()
     }
 
     private fun ticking(): Boolean = faces.keys.any { it == "timer" || it == "timer-done" || it == "recording" || it == "call" || it == "upload" || it == "transfer" || it == "now-playing" }

@@ -139,6 +139,18 @@ internal class SpringTrack(value: Double) {
         queued = null
     }
 
+    /** Plant the track on [value] with no velocity, so the next aim starts there. */
+    fun snap(value: Double) {
+        queued = null
+        goal = value
+        pos = value
+        vel = 0.0
+        anchorT = 0.0
+        anchorX = value
+        anchorV = 0.0
+        motion = MotionSpec.spring(0.5, 1.0)
+    }
+
     fun step(now: Double) {
         catchUp(now)
         val sample = eval(now)
@@ -190,7 +202,7 @@ internal class IslandRig {
     private var alert = false
     private val sched = mutableListOf<Pair<Double, () -> Unit>>()
 
-    private data class Press(val target: String, val t0: Double, val activityId: String?, var decided: Boolean = false, var up: Boolean = false, var expanded: Boolean = false, var returned: Boolean = false)
+    private data class Press(val target: String, val t0: Double, val activityId: String?, var decided: Boolean = false, var joined: Boolean = false, var up: Boolean = false, var expanded: Boolean = false, var returned: Boolean = false)
     private var press: Press? = null
 
     var hole = DRect(0.0, 0.0, 0.0, 0.0)
@@ -223,8 +235,16 @@ internal class IslandRig {
         private set
     lateinit var bubbleHeight: SpringTrack
         private set
-    lateinit var scale: SpringTrack
+    lateinit var pillScale: SpringTrack
         private set
+    lateinit var bubbleScale: SpringTrack
+        private set
+
+    /** Split expand that is absorbing the detached pill (islandcn split-expand-b). */
+    var absorbLive = false
+        private set
+    private var absorbAt = 0.0
+    private var bubbleCutAt = -1.0
 
     val primary: Spec? get() = visible().firstOrNull()
     val secondary: Spec? get() = visible().getOrNull(1)
@@ -376,18 +396,40 @@ internal class IslandRig {
     fun pointerDown(target: String) {
         val activityId = if (target == "bubble") secondary?.id else primary?.id
         press = Press(target, now, activityId)
-        val bubblePress = target == "bubble"
-        scale.aim(
-            if (bubblePress) 1.0622 else 1.187,
-            motion(if (bubblePress) Spring(0.509, 0.05) else Spring(0.803, 0.641)),
-            now,
-        )
+        // The bubble swells about its own centre. The attached pill stays put (split-expand-b).
+        if (target == "bubble") bubbleScale.aim(1.0622, motion(Spring(0.509, 0.05)), now)
+        else pillScale.aim(1.187, motion(Spring(0.803, 0.641)), now)
+    }
+
+    /** No neck while the bubble is only swelling. The two join when the expand absorbs it. */
+    fun tightNeck(): Boolean = press?.target == "bubble" && press?.expanded != true && bubbleHeight.pos >= 0.5
+
+    fun bubbleContentGone(): Boolean = bubbleCutAt >= 0.0 && now >= bubbleCutAt
+
+    fun exitAlpha(): Float {
+        if (!absorbLive) return 1f
+        val presence = solveSpring(Spring(0.33, 1.0), 1.0, 0.0, (now - absorbAt).coerceAtLeast(0.0)).x.coerceIn(0.0, 1.0)
+        return presence.pow(1.5).toFloat()
+    }
+
+    fun enterAlpha(): Float {
+        if (!absorbLive) return 1f
+        val t = now - (absorbAt + 0.239)
+        if (t <= 0.0) return 0f
+        return (1.0 + solveSpring(Spring(0.38, 1.0), -1.0, 0.0, t).x).coerceIn(0.0, 1.0).toFloat()
+    }
+
+    /** Expanded card at rest. Incoming text is laid out here so it never jumps at the end. */
+    fun restingExpanded(): DRect {
+        val shape = shape(Kind.EXPANDED, measure())
+        return DRect(centerX + shape.left, shape.top, centerX + shape.right, shape.top + shape.height)
     }
 
     fun pointerUp() {
         val current = press ?: return
         val held = now - current.t0
         if (!current.decided && held < 0.1) {
+            bubbleCutAt = -1.0
             val id = current.activityId
             if (id != null) onPressed?.invoke(id)
             val idle = kind == Kind.IDLE || primary == null
@@ -406,6 +448,14 @@ internal class IslandRig {
             val held = now - current.t0
             val idle = primary == null && expandedId == null
             if (!current.decided && !current.up && held >= 0.1) current.decided = true
+            if (current.decided && !current.joined && current.target == "bubble" && bubbleHeight.pos >= 0.5) {
+                current.joined = true
+                val joinAt = current.t0 + 0.224
+                bubbleCutAt = joinAt - 0.023
+                val idleRight = shape(Kind.IDLE, Measure()).right
+                val wait = (joinAt - 0.012 - now).coerceAtLeast(0.0)
+                bubbleLeft.aim(idleRight - bubbleHeight.pos, motion(Spring(0.25, 1.0)), now, hold = wait)
+            }
             if (current.decided && !current.expanded && held >= (if (current.target == "bubble") 0.224 else 0.216)) {
                 current.expanded = true
                 if (!idle) {
@@ -426,6 +476,10 @@ internal class IslandRig {
             for (item in due) item.second()
         }
         for (track in tracks()) track.step(now)
+        if (absorbLive && now > absorbAt + 0.7 && enterAlpha() > 0.98f && !left.busy && !right.busy && !height.busy && !radius.busy) {
+            absorbLive = false
+            bubbleCutAt = -1.0
+        }
     }
 
     fun measureLeading(id: String): Double = byId[id]?.leading ?: 0.0
@@ -451,7 +505,8 @@ internal class IslandRig {
         bubbleLeft = SpringTrack(target.bubbleLeft)
         bubbleRight = SpringTrack(target.bubbleRight)
         bubbleHeight = SpringTrack(target.bubbleHeight)
-        scale = SpringTrack(1.0)
+        pillScale = SpringTrack(1.0)
+        bubbleScale = SpringTrack(1.0)
     }
 
     private fun visible(): List<Spec> {
@@ -667,9 +722,16 @@ internal class IslandRig {
     }
 
     private fun aim(transition: Transition, target: Shape, idle: Shape) {
-        // Long-press from a split absorbs the bubble: both pills ease toward the sensor on the
-        // swap springs, then size and corner radius open together (islandcn absorbExpand).
+        // Long-press from a split absorbs the bubble: it slides under the sensor, the attached
+        // pill contracts, then the one shape opens (islandcn absorbExpand / split-expand-b).
         val absorbing = !reduced && transition == Transition.SWAP && bubbleHeight.pos >= 0.5 && target.bubbleHeight < 0.5
+        if (transition == Transition.SWAP || transition == Transition.EXPAND || transition == Transition.PRESS_EXPAND || transition == Transition.APPEAR_EXPAND) {
+            foldPillScale()
+        }
+        if (absorbing && !absorbLive) {
+            absorbLive = true
+            absorbAt = now
+        }
         val edge = motion(edgeSpring(transition))
         val body = motion(bodySpring(transition))
         val corner = if (absorbing) motion(Spring(0.49, 0.826)) else motion(cornerSpring(transition))
@@ -691,10 +753,22 @@ internal class IslandRig {
         val radiusHold = if (reduced) 0.0 else if (absorbing) 0.223 else cornerDelay(transition)
         radius.aim(target.radius, corner, now, hold = radiusHold)
         if (absorbing) {
-            val rest = bubbleHeight.pos
-            bubbleLeft.aim(idle.right - rest, motion(Spring(0.25, 1.0)), now)
+            val restH = bubbleHeight.pos
+            val grown = bubbleScale.pos
+            if (grown > 1.001) {
+                val mid = (bubbleLeft.pos + bubbleRight.pos) / 2.0
+                val half = (bubbleRight.pos - bubbleLeft.pos) / 2.0
+                bubbleLeft.snap(mid - half * grown)
+                bubbleRight.snap(mid + half * grown)
+                bubbleHeight.snap(restH * grown)
+                bubbleScale.snap(1.0)
+                bubbleHeight.aim(restH, motion(Spring(0.25, 1.0)), now)
+            }
+            bubbleLeft.aim(idle.right - restH, motion(Spring(0.25, 1.0)), now)
             bubbleRight.aim(idle.right, motion(Spring(0.42, 1.0)), now)
-            bubbleHeight.aim(0.0, MotionSpec.tween(0.0), now, hold = 0.222)
+            schedule(now + 0.222) {
+                if (kind == Kind.EXPANDED) bubbleHeight.aim(0.0, MotionSpec.tween(0.0), now)
+            }
         } else if (transition == Transition.SPLIT) {
             bubbleLeft.aim(target.bubbleLeft, motion(Spring(0.376, 0.811)), now, hold = if (reduced) 0.0 else 0.345)
             if (via > 0) bubbleRight.aim(target.bubbleRight, edge, now, via = idle.bubbleRight, viaDelay = via, viaMotion = edge)
@@ -745,9 +819,26 @@ internal class IslandRig {
         }
     }
 
+    private fun foldPillScale() {
+        val grown = pillScale.pos
+        if (grown < 1.002) return
+        val mid = (left.pos + right.pos) / 2.0
+        val half = (right.pos - left.pos) * grown / 2.0
+        left.snap(mid - half)
+        right.snap(mid + half)
+        val h = height.pos
+        top.snap(top.pos - h * (grown - 1.0) / 2.0)
+        height.snap(h * grown)
+        radius.snap(radius.pos * grown)
+        pillScale.snap(1.0)
+    }
+
     private fun releaseScale(at: Double, idle: Boolean) {
         val spring = if (idle) Spring(0.53, 0.77) else Spring(0.3, 1.5)
-        val go = { scale.aim(1.0, motion(spring), now) }
+        val go = {
+            if (abs(pillScale.pos - 1.0) > 0.001 || abs(pillScale.goal - 1.0) > 0.001) pillScale.aim(1.0, motion(spring), now)
+            if (abs(bubbleScale.pos - 1.0) > 0.001 || abs(bubbleScale.goal - 1.0) > 0.001) bubbleScale.aim(1.0, motion(spring), now)
+        }
         if (at > now + 0.001) schedule(at, go) else go()
     }
 
@@ -755,7 +846,7 @@ internal class IslandRig {
         sched.add(at to run)
     }
 
-    private fun tracks() = listOf(left, right, top, height, radius, bubbleLeft, bubbleRight, bubbleHeight, scale)
+    private fun tracks() = listOf(left, right, top, height, radius, bubbleLeft, bubbleRight, bubbleHeight, pillScale, bubbleScale)
 
     fun slotRects(): Triple<DRect?, DRect?, DRect?> {
         val shown = visible()
@@ -896,11 +987,11 @@ private fun arcTo(path: Path, sx: Double, sy: Double, ex: Double, ey: Double, ra
     path.arcTo(oval, Math.toDegrees(start).toFloat(), Math.toDegrees(sweep).toFloat(), false)
 }
 
-internal fun bridgeNeck(pill: DRect, bubble: DRect): Path {
+internal fun bridgeNeck(pill: DRect, bubble: DRect, maxGap: Double = 5.0): Path {
     val path = Path()
     val gap = bubble.left - pill.right
-    if (gap > 5 || pill.height < 2 || bubble.height < 2) return path
-    val t = (1 - (gap / 5)).coerceIn(0.0, 1.0)
+    if (gap > maxGap || pill.height < 2 || bubble.height < 2) return path
+    val t = (1 - (gap / maxGap)).coerceIn(0.0, 1.0)
     val neck = min(pill.height, bubble.height) * t.pow(0.65)
     val mid = (pill.centerY + bubble.centerY) / 2
     val y0 = mid - neck / 2
