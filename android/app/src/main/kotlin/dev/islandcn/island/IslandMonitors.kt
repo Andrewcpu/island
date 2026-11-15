@@ -5,6 +5,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.display.DisplayManager
+import android.view.Display
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.ContactsContract
@@ -28,6 +30,7 @@ object IslandMonitors {
     private var batteryWatching = false
     private var screenWatching = false
     private var screenOff = false
+    private var dreaming = false
     private var wasCharging = false
     private var batteryBaseline = false
     private var recorder: AudioRecord? = null
@@ -117,8 +120,11 @@ object IslandMonitors {
     /**
      * Off, then on, peeks the island. A screen that is already on does not.
      * The first reading only records the current state.
+     * A dream (screensaver) hides the border and halo the same way the screen
+     * being off does, and does not peek. Chrome returns when the dream stops
+     * and the screen is on. AOD stays off.
      */
-    fun screenLit(): Boolean = !screenOff
+    fun screenLit(): Boolean = !screenOff && !dreaming
 
     fun watchScreen(context: Context) {
         if (screenWatching) return
@@ -126,9 +132,12 @@ object IslandMonitors {
         val app = context.applicationContext
         val power = app.getSystemService(PowerManager::class.java)
         screenOff = power?.isInteractive == false
+        dreaming = dreamRunning(app)
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_DREAMING_STARTED)
+            addAction(Intent.ACTION_DREAMING_STOPPED)
         }
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -142,6 +151,15 @@ object IslandMonitors {
                         screenOff = false
                         IslandOverlayService.onScreenWake()
                     }
+                    Intent.ACTION_DREAMING_STARTED -> {
+                        dreaming = true
+                        IslandOverlayService.syncChrome()
+                    }
+                    Intent.ACTION_DREAMING_STOPPED -> {
+                        dreaming = false
+                        if (power?.isInteractive == false || !displayOn(app)) screenOff = true
+                        IslandOverlayService.syncChrome()
+                    }
                 }
             }
         }
@@ -149,6 +167,25 @@ object IslandMonitors {
             app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             app.registerReceiver(receiver, filter)
+        }
+    }
+
+    /** True only for a fully lit display. Doze and off, including AOD, are dark. */
+    private fun displayOn(app: Context): Boolean {
+        val state = app.getSystemService(DisplayManager::class.java)
+            ?.getDisplay(Display.DEFAULT_DISPLAY)
+            ?.state
+            ?: return true
+        return state == Display.STATE_ON
+    }
+
+    /** DreamManager.isDreaming() is hidden. A miss just waits for the broadcasts. */
+    private fun dreamRunning(app: Context): Boolean {
+        return try {
+            val dream = app.getSystemService("dream") ?: return false
+            dream.javaClass.getMethod("isDreaming").invoke(dream) == true
+        } catch (_: Throwable) {
+            false
         }
     }
 

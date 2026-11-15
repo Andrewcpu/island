@@ -289,9 +289,14 @@ class IslandOverlayService : Service() {
             instance?.pill?.setScreenLit(false)
         }
 
+        /** Border and halo follow the screen and the dream. No peek. */
+        fun syncChrome() {
+            instance?.pill?.setScreenLit(IslandMonitors.screenLit())
+        }
+
         fun onScreenWake() {
             val view = instance?.pill ?: return
-            view.setScreenLit(true)
+            view.setScreenLit(IslandMonitors.screenLit())
             view.onScreenWake()
         }
 
