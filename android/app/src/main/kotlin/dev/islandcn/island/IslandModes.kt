@@ -90,6 +90,8 @@ internal object IslandModes {
             drawExpanded(canvas, id, titleText, detail, valueText, accent, progress, glyph, elapsed, remaining, pill, hole, now, hits, alpha, art, playing, icon)
         } else if (id == "live") {
             liveCompact(canvas, pill, hole, icon, now, alpha)
+        } else if (id == "battery" && kind == Kind.COMPACT) {
+            batteryCompact(canvas, pill, hole, valueText, accent, titleText == "Charging" || titleText == "Charged", alpha)
         } else {
             drawCompact(canvas, id, titleText, detail, valueText, trail, accent, progress, leading, trailing, now, alpha, art, playing, icon)
         }
@@ -723,14 +725,58 @@ internal object IslandModes {
         }
     }
 
+    /** Width of the charging percentage in the compact paint, so the pill and the text agree. */
+    fun percentWidth(percent: String): Double = compact.measureText(percent).toDouble()
+
     /**
-     * islandcn `BatteryGlyph` as the split bubble draws it: a solid rounded body, charge from the
-     * left, no outline and no bolt. Charging fills mint to lime over a deep green empty body.
-     * Otherwise the fill is the ink colour and the empty body and nub are that colour at 42%.
+     * Solo charging pill. The camera capsule (about 95×37) is the floor. It grows, evenly, only
+     * when the percentage no longer fits in the ear beside the lens.
      */
-    private fun batteryGlyph(canvas: Canvas, bubble: DRect, percent: String, charging: Boolean, color: Int, alpha: Int) {
+    fun chargingPillWidth(textW: Double, sensorW: Double, holeW: Double): Double {
+        val sensor = sensorW.coerceAtLeast(94.85)
+        val lens = if (holeW >= 1.0) holeW else 28.0
+        val lensHalf = lens / 2.0
+        val ear = sensor / 2.0 - lensHalf - chargeClear - chargeEdge
+        if (textW <= ear + 0.5) return sensor
+        val needLeft = textW + lensHalf + chargeClear + chargeEdge
+        val needRight = chargeGlyph + lensHalf + chargeClear + chargeEdge
+        return max(sensor, max(needLeft, needRight) * 2.0)
+    }
+
+    /** Percent in one ear, BatteryGlyph in the other. The word "Charging" stays on the expanded card. */
+    private fun batteryCompact(canvas: Canvas, pill: DRect, hole: DRect, percent: String, accent: Int, charging: Boolean, alpha: Int) {
+        val lens = if (hole.width >= 1.0 && hole.centerX >= pill.left && hole.centerX <= pill.right) hole else {
+            val diameter = 28.0
+            DRect(pill.centerX - diameter / 2, pill.centerY - diameter / 2, pill.centerX + diameter / 2, pill.centerY + diameter / 2)
+        }
+        val rightRoom = pill.right - chargeEdge - (lens.right + chargeClear)
+        val glyphW = min(chargeGlyph, max(16.0, rightRoom))
+        val glyphLeft = if (rightRoom > chargeGlyph) lens.right + chargeClear else pill.right - chargeEdge - glyphW
+        batteryGlyph(
+            canvas,
+            DRect(glyphLeft, pill.top, glyphLeft + glyphW, pill.bottom),
+            percent,
+            charging,
+            accent,
+            alpha,
+            inset = 0.0,
+        )
+        val color = if (charging) 0xFF53FA6D.toInt() else accent
+        val textRight = lens.left - chargeClear
+        val textLeft = pill.left + chargeEdge
+        if (textRight - textLeft > 8.0) {
+            textIn(canvas, percent, compact, color, DRect(textLeft, pill.top, textRight, pill.bottom), true, alpha)
+        }
+    }
+
+    /**
+     * islandcn `BatteryGlyph`: a solid rounded body, charge from the left, no outline and no bolt.
+     * Charging fills mint to lime over a deep green empty body. Otherwise the fill is the ink
+     * colour and the empty body and nub are that colour at 42%.
+     */
+    private fun batteryGlyph(canvas: Canvas, bubble: DRect, percent: String, charging: Boolean, color: Int, alpha: Int, inset: Double = 6.0) {
         val level = (percent.removeSuffix("%").toFloatOrNull()?.div(100f) ?: 0f).coerceIn(0f, 1f)
-        val width = min(27.0, bubble.width - 6.0).toFloat().coerceAtLeast(16f)
+        val width = min(27.0, bubble.width - inset).toFloat().coerceAtLeast(16f)
         val scale = width / 36.1f
         val nubW = 1.9f * scale
         val nubH = 5.8f * scale
@@ -778,6 +824,10 @@ internal object IslandModes {
             fill,
         )
     }
+
+    private const val chargeEdge = 7.2
+    private const val chargeClear = 1.5
+    private const val chargeGlyph = 27.0
 
     private fun batteryRow(canvas: Canvas, rect: DRect, percent: String, accent: Int, charging: Boolean, alpha: Int) {
         val color = if (charging) 0xFF53FA6D.toInt() else accent

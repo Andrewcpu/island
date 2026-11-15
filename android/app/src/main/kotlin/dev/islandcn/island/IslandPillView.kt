@@ -832,6 +832,7 @@ class IslandPillView(context: Context) : View(context) {
             existing.title = next.title
             existing.detail = next.detail
             existing.value = next.value
+            rig.update(specOf(existing))
             kick()
             return
         }
@@ -956,7 +957,8 @@ class IslandPillView(context: Context) : View(context) {
                 lead to trail
             }
         }
-        return Spec(face.id, face.priority, 0, face.group, leadW, trailW, face.minimal, face.body)
+        val chargeText = if (face.id == "battery") IslandModes.percentWidth(face.value) else 0.0
+        return Spec(face.id, face.priority, 0, face.group, leadW, trailW, face.minimal, face.body, chargeText)
     }
 
     private fun reveal(): Float {

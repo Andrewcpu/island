@@ -174,6 +174,8 @@ internal data class Spec(
     val trailing: Double,
     val minimal: Double,
     val expandedBody: Double,
+    /** Measured width of the charging percentage. 0 unless this is the battery. */
+    val chargeText: Double = 0.0,
 )
 
 internal data class DRect(val left: Double, val top: Double, val right: Double, val bottom: Double) {
@@ -621,10 +623,17 @@ internal class IslandRig {
                 Shape(-width / 2, width / 2, topInset, idleHeight, idleHeight / 2, width / 2 - idleHeight, width / 2, 0.0)
             }
             Kind.COMPACT -> {
-                val sides = sides(measure.leading, measure.trailing)
-                val left = -min(sensorHalf + sides.first, 260.0 / 2)
-                val right = min(sensorHalf + sides.second, 260.0 / 2)
-                Shape(left, right, topInset, compactHeight, compactHeight / 2, right - compactHeight, right, 0.0)
+                val solo = visible().singleOrNull()
+                if (solo?.id == "battery") {
+                    val width = IslandModes.chargingPillWidth(solo.chargeText, sensorWidth, hole.width)
+                    val half = width / 2.0
+                    Shape(-half, half, topInset, compactHeight, compactHeight / 2, half - compactHeight, half, 0.0)
+                } else {
+                    val sides = sides(measure.leading, measure.trailing)
+                    val left = -min(sensorHalf + sides.first, 260.0 / 2)
+                    val right = min(sensorHalf + sides.second, 260.0 / 2)
+                    Shape(left, right, topInset, compactHeight, compactHeight / 2, right - compactHeight, right, 0.0)
+                }
             }
             Kind.MINIMAL -> {
                 val split = splitOf(measure)
