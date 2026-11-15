@@ -26,19 +26,30 @@ object IslandMedia {
         val duration: Long = 0L,
         val updatedAt: Long = 0L,
         val speed: Float = 1f,
+        /** elapsedRealtime when this snapshot was read. Used when the session omits an update time. */
+        val sampledAt: Long = 0L,
+        /** True when a notification action is Unlike, false when it is Like, null when there is none. */
+        val liked: Boolean? = null,
         val art: Bitmap? = null,
     )
 
     fun current(context: Context): Track? {
-        val fromListener = IslandNotificationListener.instance?.let { sessionsFrom(it) }
-        if (fromListener != null) return fromListener
-        return try {
-            val manager = context.getSystemService(MediaSessionManager::class.java) ?: return null
-            val component = ComponentName(context, IslandNotificationListener::class.java)
-            pick(context, manager.getActiveSessions(component))
+        val track = try {
+            val fromListener = IslandNotificationListener.instance?.let { sessionsFrom(it) }
+            if (fromListener != null) fromListener
+            else {
+                val manager = context.getSystemService(MediaSessionManager::class.java)
+                val component = ComponentName(context, IslandNotificationListener::class.java)
+                if (manager == null) null else {
+                    val active = manager.getActiveSessions(component)
+                    pick(context, active, notesFor(active))
+                }
+            }
         } catch (_: SecurityException) {
             null
         }
+        if (track == null) IslandLinks.clearMedia()
+        return track
     }
 
     fun describe(context: Context, controller: MediaController): Track? {
@@ -51,65 +62,96 @@ object IslandMedia {
         if (!playing && !paused) return null
         val artist = meta?.getString(MediaMetadata.METADATA_KEY_ARTIST)?.trim().orEmpty()
         val duration = meta?.getLong(MediaMetadata.METADATA_KEY_DURATION)?.coerceAtLeast(0L) ?: 0L
+        val reported = state.position
         return Track(
             title = title,
             artist = artist,
             playing = playing,
-            position = state.position.coerceAtLeast(0L),
+            position = if (reported == PlaybackState.PLAYBACK_POSITION_UNKNOWN) 0L else reported.coerceAtLeast(0L),
             duration = duration,
             updatedAt = state.lastPositionUpdateTime,
             speed = state.playbackSpeed,
+            sampledAt = SystemClock.elapsedRealtime(),
             art = artwork(context, meta, title),
         )
     }
 
     /**
-     * Position at [now], in the elapsedRealtime time base.
-     * Playing sessions advance from the last reported position. Paused ones stay put.
+     * Position at [now], from PlaybackState position, lastPositionUpdateTime, and speed.
+     * Playing advances. Paused stays on the reported position. Duration is the metadata duration.
      */
-    fun livePosition(track: Track, now: Long = SystemClock.elapsedRealtime()): Long {
+    fun livePosition(track: Track, now: Long = SystemClock.elapsedRealtime(), wallNow: Long = System.currentTimeMillis()): Long {
         val base = track.position.coerceAtLeast(0L)
-        val capped = if (track.duration > 0L) base.coerceAtMost(track.duration) else base
-        if (!track.playing || track.updatedAt <= 0L || track.speed == 0f) return capped
-        val delta = ((now - track.updatedAt) * track.speed).toLong()
-        val advanced = base + delta
-        return if (track.duration > 0L) advanced.coerceIn(0L, track.duration) else advanced.coerceAtLeast(0L)
+        fun cap(value: Long) = if (track.duration > 0L) value.coerceIn(0L, track.duration) else value.coerceAtLeast(0L)
+        if (!track.playing) return cap(base)
+        val speed = if (track.speed == 0f) 1f else track.speed
+        val anchor = when {
+            track.updatedAt <= 0L -> track.sampledAt
+            track.updatedAt > now + 60_000L -> now - (wallNow - track.updatedAt)
+            else -> track.updatedAt
+        }
+        if (anchor <= 0L) return cap(base)
+        val delta = ((now - anchor) * speed).toLong()
+        return cap(base + delta)
     }
 
     private fun sessionsFrom(service: android.service.notification.NotificationListenerService): Track? {
         val controllers = mutableListOf<MediaController>()
-        val notes = service.activeNotifications ?: emptyArray()
-        for (sbn in notes) {
-            val extras = sbn.notification.extras
-            val token = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                extras.getParcelable(android.app.Notification.EXTRA_MEDIA_SESSION, android.media.session.MediaSession.Token::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                extras.getParcelable(android.app.Notification.EXTRA_MEDIA_SESSION)
-            }
-            if (token is android.media.session.MediaSession.Token) {
-                controllers.add(MediaController(service, token))
-            }
+        val notes = HashMap<android.media.session.MediaSession.Token, android.app.Notification>()
+        for (sbn in service.activeNotifications ?: emptyArray()) {
+            val token = sessionToken(sbn.notification) ?: continue
+            notes[token] = sbn.notification
+            controllers.add(MediaController(service, token))
         }
         if (controllers.isEmpty()) {
             return try {
                 val manager = service.getSystemService(MediaSessionManager::class.java) ?: return null
-                pick(service, manager.getActiveSessions(ComponentName(service, IslandNotificationListener::class.java)))
+                val active = manager.getActiveSessions(ComponentName(service, IslandNotificationListener::class.java))
+                pick(service, active, notesFor(active))
             } catch (_: SecurityException) {
                 null
             }
         }
-        return pick(service, controllers)
+        return pick(service, controllers, notes)
     }
 
-    private fun pick(context: Context, controllers: List<MediaController>): Track? {
+    private fun pick(context: Context, controllers: List<MediaController>, notes: Map<android.media.session.MediaSession.Token, android.app.Notification>): Track? {
         val tracks = controllers.mapNotNull { controller ->
             val track = describe(context, controller) ?: return@mapNotNull null
-            track to controller.transportControls
+            Triple(track, controller, controller.transportControls)
         }
         val chosen = tracks.firstOrNull { it.first.playing } ?: tracks.firstOrNull() ?: return null
-        IslandNotificationListener.controls = chosen.second
-        return chosen.first
+        IslandNotificationListener.controls = chosen.third
+        IslandLinks.bindMedia(notes[chosen.second.sessionToken] ?: packageNote(chosen.second.packageName))
+        return chosen.first.copy(liked = IslandLinks.liked)
+    }
+
+    /** The only media notification from this package, when the session token did not match. */
+    private fun packageNote(packageName: String): android.app.Notification? {
+        val service = IslandNotificationListener.instance ?: return null
+        val matched = service.activeNotifications?.filter { it.packageName == packageName && sessionToken(it.notification) != null }.orEmpty()
+        return if (matched.size == 1) matched.first().notification else null
+    }
+
+    private fun notesFor(controllers: List<MediaController>): Map<android.media.session.MediaSession.Token, android.app.Notification> {
+        val service = IslandNotificationListener.instance ?: return emptyMap()
+        val notes = HashMap<android.media.session.MediaSession.Token, android.app.Notification>()
+        for (sbn in service.activeNotifications ?: emptyArray()) {
+            val token = sessionToken(sbn.notification) ?: continue
+            if (controllers.isEmpty() || controllers.any { it.sessionToken == token }) notes[token] = sbn.notification
+        }
+        return notes
+    }
+
+    private fun sessionToken(notification: android.app.Notification): android.media.session.MediaSession.Token? {
+        val extras = notification.extras
+        val token = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            extras.getParcelable(android.app.Notification.EXTRA_MEDIA_SESSION, android.media.session.MediaSession.Token::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            extras.getParcelable(android.app.Notification.EXTRA_MEDIA_SESSION)
+        }
+        return token as? android.media.session.MediaSession.Token
     }
 
     private fun artwork(context: Context, meta: MediaMetadata?, title: String): Bitmap? {

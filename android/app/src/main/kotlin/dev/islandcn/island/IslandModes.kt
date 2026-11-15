@@ -27,6 +27,9 @@ internal object IslandModes {
         var cancel = DRect(0.0, 0.0, 0.0, 0.0)
         var stop = DRect(0.0, 0.0, 0.0, 0.0)
         var toggle = DRect(0.0, 0.0, 0.0, 0.0)
+        var previous = DRect(0.0, 0.0, 0.0, 0.0)
+        var next = DRect(0.0, 0.0, 0.0, 0.0)
+        var like = DRect(0.0, 0.0, 0.0, 0.0)
 
         fun clear() {
             decline = DRect(0.0, 0.0, 0.0, 0.0)
@@ -35,6 +38,9 @@ internal object IslandModes {
             cancel = decline
             stop = decline
             toggle = decline
+            previous = decline
+            next = decline
+            like = decline
         }
     }
 
@@ -84,10 +90,11 @@ internal object IslandModes {
         art: Bitmap? = null,
         playing: Boolean = false,
         icon: Bitmap? = null,
+        liked: Boolean? = null,
     ) {
         hits.clear()
         if (kind == Kind.EXPANDED) {
-            drawExpanded(canvas, id, titleText, detail, valueText, accent, progress, glyph, elapsed, remaining, pill, hole, now, hits, alpha, art, playing, icon)
+            drawExpanded(canvas, id, titleText, detail, valueText, accent, progress, glyph, elapsed, remaining, pill, hole, now, hits, alpha, art, playing, icon, liked)
         } else if (id == "live") {
             liveCompact(canvas, pill, hole, icon, now, alpha)
         } else if (id == "battery" && kind == Kind.COMPACT) {
@@ -270,12 +277,13 @@ internal object IslandModes {
         art: Bitmap?,
         playing: Boolean,
         icon: Bitmap?,
+        liked: Boolean?,
     ) {
         val contentTop = pill.top + 18.18
         val right = pill.right - 17.81
         when (id) {
             "timer", "timer-done" -> timerExpanded(canvas, pill, contentTop, right, titleText, valueText, accent, detail == "Paused", hits, alpha)
-            "now-playing" -> playerExpanded(canvas, pill, hole, titleText, detail, accent, playing, progress, elapsed, remaining, now, hits, alpha, art)
+            "now-playing" -> playerExpanded(canvas, pill, hole, titleText, detail, accent, playing, progress, elapsed, remaining, now, hits, alpha, art, liked)
             "call" -> callExpanded(canvas, pill, titleText, detail, valueText, hits, alpha, icon)
             "battery" -> batteryExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
             "eta" -> etaExpanded(canvas, pill, titleText, detail, valueText, accent, alpha, icon)
@@ -307,7 +315,7 @@ internal object IslandModes {
         canvas.drawText(time, (right - value.measureText(time)).toFloat(), (top + 18 + 30).toFloat(), value)
     }
 
-    private fun playerExpanded(canvas: Canvas, pill: DRect, hole: DRect, titleText: String, artist: String, accent: Int, playing: Boolean, fraction: Float, elapsed: String, remaining: String, now: Double, hits: Hits, alpha: Int, art: Bitmap?) {
+    private fun playerExpanded(canvas: Canvas, pill: DRect, hole: DRect, titleText: String, artist: String, accent: Int, playing: Boolean, fraction: Float, elapsed: String, remaining: String, now: Double, hits: Hits, alpha: Int, art: Bitmap?, liked: Boolean?) {
         var artBox = DRect(pill.left + 21.7, pill.top + 21.9, pill.left + 21.7 + 59.5, pill.top + 21.9 + 59.5)
         if (artBox.overlaps(hole)) {
             val nudge = hole.left - 8.0 - artBox.right
@@ -344,9 +352,38 @@ internal object IslandModes {
         canvas.drawText(remainingLabel, (pill.right - 24 - small.measureText(remainingLabel)).toFloat(), (barTop + 4).toFloat(), small)
         val buttonY = pill.top + 142
         hits.toggle = DRect(pill.centerX - 18, buttonY - 18, pill.centerX + 18, buttonY + 18)
+        hits.previous = DRect(pill.centerX - 73.5 - 20, buttonY - 20, pill.centerX - 73.5 + 20, buttonY + 20)
+        hits.next = DRect(pill.centerX + 73.5 - 20, buttonY - 20, pill.centerX + 73.5 + 20, buttonY + 20)
         musicGlyph(canvas, if (playing) "pause" else "play", pill.centerX, buttonY, 30.0, Color.WHITE, alpha)
         musicGlyph(canvas, "back", pill.centerX - 73.5, buttonY, 34.0, Color.WHITE, alpha)
         musicGlyph(canvas, "forward", pill.centerX + 73.5, buttonY, 34.0, Color.WHITE, alpha)
+        if (liked != null) {
+            val heartX = pill.right - 34.0
+            hits.like = DRect(heartX - 18, buttonY - 18, heartX + 18, buttonY + 18)
+            heart(canvas, heartX, buttonY, 22.0, liked, alpha)
+        }
+    }
+
+    /** Filled when the track is liked (the action is Unlike), outline when the action is Like. */
+    private fun heart(canvas: Canvas, cx: Double, cy: Double, size: Double, filled: Boolean, alpha: Int) {
+        val s = size.toFloat()
+        val x = cx.toFloat()
+        val y = cy.toFloat()
+        val path = android.graphics.Path()
+        path.moveTo(x, y + s * 0.36f)
+        path.cubicTo(x - s * 0.64f, y + s * 0.02f, x - s * 0.4f, y - s * 0.46f, x, y - s * 0.14f)
+        path.cubicTo(x + s * 0.4f, y - s * 0.46f, x + s * 0.64f, y + s * 0.02f, x, y + s * 0.36f)
+        path.close()
+        if (filled) {
+            fill.color = Color.WHITE
+            fill.alpha = alpha
+            canvas.drawPath(path, fill)
+            return
+        }
+        stroke.color = Color.WHITE
+        stroke.alpha = alpha
+        stroke.strokeWidth = (s * 0.09f).coerceAtLeast(1.4f)
+        canvas.drawPath(path, stroke)
     }
 
     /** The line uses the island width. It steps aside for [avoid] only when the glyphs run into it. */

@@ -506,12 +506,15 @@ class IslandPillView(context: Context) : View(context) {
             MotionEvent.ACTION_UP -> {
                 pressedButton = when {
                     !rig.expanded -> null
-                    contains(hits.decline, x, y) -> "decline"
-                    contains(hits.accept, x, y) -> "accept"
-                    contains(hits.pause, x, y) -> "pause"
-                    contains(hits.cancel, x, y) -> "cancel"
-                    contains(hits.stop, x, y) -> "stop"
-                    contains(hits.toggle, x, y) -> "toggle"
+                    hit(hits.decline, x, y) -> "decline"
+                    hit(hits.accept, x, y) -> "accept"
+                    hit(hits.pause, x, y) -> "pause"
+                    hit(hits.cancel, x, y) -> "cancel"
+                    hit(hits.stop, x, y) -> "stop"
+                    hit(hits.like, x, y) -> "like"
+                    hit(hits.previous, x, y) -> "previous"
+                    hit(hits.next, x, y) -> "next"
+                    hit(hits.toggle, x, y) -> "toggle"
                     else -> null
                 }
                 rig.pointerUp()
@@ -686,8 +689,27 @@ class IslandPillView(context: Context) : View(context) {
                 IslandMonitors.mediaAction(if (face.value == "Playing") "pause" else "play")
                 return
             }
+            "previous" -> {
+                IslandMonitors.mediaAction("previous")
+                return
+            }
+            "next" -> {
+                IslandMonitors.mediaAction("next")
+                return
+            }
+            "like" -> {
+                IslandLinks.like()
+                return
+            }
         }
-        if (rig.expanded) return
+        if (rig.look() == Kind.EXPANDED) {
+            val openId = rig.shownId() ?: id
+            if (IslandLinks.open(context, openId)) {
+                rig.collapse()
+                kick()
+            }
+            return
+        }
         when (id) {
             "timer" -> {
                 if (liveTimer) return
@@ -807,10 +829,30 @@ class IslandPillView(context: Context) : View(context) {
     private fun showTrack(track: IslandMedia.Track) {
         val state = if (track.playing) "Playing" else "Paused"
         val artist = track.artist.ifBlank { state }
-        mediaTrack = track
-        val live = IslandMedia.livePosition(track)
+        val previous = mediaTrack
+        // A session that repeats the same position with a fresh timestamp would rewind the bar.
+        // Keep the clock that is already ahead unless this is a seek or a new track.
+        val adopted = if (
+            previous != null &&
+            track.playing &&
+            previous.playing &&
+            previous.title == track.title &&
+            previous.duration > 0L &&
+            track.position >= previous.position - 500L &&
+            IslandMedia.livePosition(track) + 800L < IslandMedia.livePosition(previous)
+        ) {
+            previous.copy(
+                liked = track.liked,
+                art = track.art ?: previous.art,
+                duration = if (track.duration > 0L) track.duration else previous.duration,
+            )
+        } else {
+            track
+        }
+        mediaTrack = adopted
+        val live = IslandMedia.livePosition(adopted)
         mediaPosition = live
-        mediaDuration = track.duration
+        mediaDuration = adopted.duration
         val fraction = if (track.duration > 0L) live.toFloat() / track.duration else 0f
         val existing = faces["now-playing"]
         if (existing != null && existing.title == track.title && existing.detail == artist && existing.value == state) {
@@ -1101,6 +1143,7 @@ class IslandPillView(context: Context) : View(context) {
                 art = track?.art,
                 playing = musicPlaying,
                 icon = face.icon,
+                liked = track?.liked,
             )
         }
         if (!clip) {
@@ -1154,6 +1197,8 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     private fun contains(rect: DRect, x: Double, y: Double) = x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+
+    private fun hit(rect: DRect, x: Double, y: Double) = rect.width > 1.0 && rect.height > 1.0 && contains(rect, x, y)
 
     private class Face(
         val id: String,
