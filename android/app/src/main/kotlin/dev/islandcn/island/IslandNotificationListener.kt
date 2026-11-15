@@ -27,11 +27,13 @@ class IslandNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         instance = this
         resync()
+        IslandNotificationDump.announce()
     }
 
     override fun onListenerDisconnected() {
         if (instance == this) instance = null
         sessions.clear()
+        IslandNotificationDump.announce()
     }
 
     fun resync() {
@@ -42,6 +44,7 @@ class IslandNotificationListener : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn == null) return
         handlePosted(sbn)
+        IslandNotificationDump.announce()
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
@@ -53,6 +56,12 @@ class IslandNotificationListener : NotificationListenerService() {
             sessions.remove(token)?.unregisterCallback(mediaCallback)
             IslandOverlayService.onMedia(this, IslandMedia.current(this))
         }
+        IslandNotificationDump.announce()
+    }
+
+    override fun onNotificationRankingUpdate(rankingMap: RankingMap?) {
+        super.onNotificationRankingUpdate(rankingMap)
+        IslandNotificationDump.announce()
     }
 
     private fun handlePosted(sbn: StatusBarNotification) {

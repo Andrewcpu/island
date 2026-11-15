@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 
 /// Android platform channel. Every call fails soft when the host has no implementation,
@@ -6,8 +8,8 @@ class IslandPlatform {
   static const _methods = MethodChannel('dev.islandcn/platform');
   static const _events = EventChannel('dev.islandcn/events');
 
-  void listen(void Function(Map<String, dynamic> event) onEvent) {
-    _events.receiveBroadcastStream().listen((event) {
+  StreamSubscription<dynamic> listen(void Function(Map<String, dynamic> event) onEvent) {
+    return _events.receiveBroadcastStream().listen((event) {
       if (event is Map) {
         onEvent(event.map((key, value) => MapEntry('$key', value)));
       }
@@ -89,6 +91,8 @@ class IslandPlatform {
   }
 
   Future<Map<String, dynamic>> permissions() => _call('permissionStatus');
+
+  Future<Map<String, dynamic>> activeNotifications() => _call('activeNotifications');
 
   Future<Map<String, dynamic>> request(List<String> permissions) => _call('requestPermissions', {'permissions': permissions});
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../platform.dart';
 import '../theme.dart';
+import 'notifications_page.dart';
 
 class SetupPage extends StatefulWidget {
   const SetupPage({super.key});
@@ -69,6 +70,16 @@ class _SetupPageState extends State<SetupPage> with WidgetsBindingObserver {
               style: const TextStyle(color: IslandColors.secondary, fontSize: 15, height: 1.35),
             ),
             const SizedBox(height: 18),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Active notifications', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+              subtitle: const Text('Every notification on the phone right now', style: TextStyle(color: IslandColors.secondary)),
+              trailing: const Icon(Icons.chevron_right, color: IslandColors.secondary),
+              onTap: () {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationsPage()));
+              },
+            ),
+            const SizedBox(height: 8),
             if (!above)
               FilledButton(
                 onPressed: platform.openAccessibilitySettings,

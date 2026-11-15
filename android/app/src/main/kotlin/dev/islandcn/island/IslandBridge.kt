@@ -83,6 +83,10 @@ object IslandBridge {
             "display" -> result.success(IslandMonitors.display(context))
             "cutout" -> result.success(mapOf("cutouts" to IslandMonitors.cutouts(context)))
             "battery" -> result.success(IslandMonitors.battery(context))
+            "activeNotifications" -> Thread {
+                val payload = IslandNotificationDump.snapshot(IslandNotificationListener.instance)
+                android.os.Handler(android.os.Looper.getMainLooper()).post { result.success(payload) }
+            }.start()
             "calendar" -> Thread {
                 val payload = IslandMonitors.calendar(context)
                 android.os.Handler(android.os.Looper.getMainLooper()).post { result.success(payload) }
