@@ -247,6 +247,7 @@ internal class IslandRig {
         private set
     private var absorbAt = 0.0
     private var bubbleCutAt = -1.0
+    private var wakeGen = 0
 
     val primary: Spec? get() = visible().firstOrNull()
     val secondary: Spec? get() = visible().getOrNull(1)
@@ -435,6 +436,24 @@ internal class IslandRig {
         retarget(alertReturn = wasAlert)
     }
 
+    /**
+     * Screen turned on with something already on the island. Open that activity.
+     * Returns a generation the caller can use to collapse only this peek.
+     * An empty island returns null.
+     */
+    fun beginWake(time: Double): Int? {
+        if (time > now) now = time
+        val id = visible().firstOrNull()?.id ?: return null
+        val gen = ++wakeGen
+        expandedId = id
+        alert = true
+        retarget()
+        return gen
+    }
+
+    /** False once a newer expand, a real alert, or a collapse has taken over. */
+    fun wakeCurrent(gen: Int): Boolean = gen == wakeGen && alert && expandedId != null
+
     fun pointerDown(target: String) {
         val activityId = if (target == "bubble") secondary?.id else primary?.id
         press = Press(target, now, activityId)
@@ -532,6 +551,7 @@ internal class IslandRig {
     fun measureLeading(id: String): Double = byId[id]?.leading ?: 0.0
 
     private fun expand(id: String?) {
+        wakeGen++
         val targetId = id ?: primary?.id ?: return
         if (!byId.containsKey(targetId)) return
         val activity = byId[targetId] ?: return
@@ -564,6 +584,7 @@ internal class IslandRig {
     }
 
     private fun beginAlert(id: String, fromIdle: Boolean) {
+        wakeGen++
         if (!byId.containsKey(id)) return
         expandedId = id
         alert = true

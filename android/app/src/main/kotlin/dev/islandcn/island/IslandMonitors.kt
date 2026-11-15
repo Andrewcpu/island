@@ -14,6 +14,7 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.BatteryManager
 import android.os.Build
+import android.os.PowerManager
 import android.provider.CalendarContract
 import android.telecom.TelecomManager
 import android.telephony.PhoneStateListener
@@ -25,6 +26,8 @@ import kotlin.math.sqrt
 object IslandMonitors {
     private var phoneWatching = false
     private var batteryWatching = false
+    private var screenWatching = false
+    private var screenOff = false
     private var wasCharging = false
     private var batteryBaseline = false
     private var recorder: AudioRecord? = null
@@ -106,6 +109,39 @@ object IslandMonitors {
         }
         if (Build.VERSION.SDK_INT >= 33) {
             app.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            app.registerReceiver(receiver, filter)
+        }
+    }
+
+    /**
+     * Off, then on, peeks the island. A screen that is already on does not.
+     * The first reading only records the current state.
+     */
+    fun watchScreen(context: Context) {
+        if (screenWatching) return
+        screenWatching = true
+        val app = context.applicationContext
+        val power = app.getSystemService(PowerManager::class.java)
+        screenOff = power?.isInteractive == false
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_OFF -> screenOff = true
+                    Intent.ACTION_SCREEN_ON -> {
+                        if (!screenOff) return
+                        screenOff = false
+                        IslandOverlayService.onScreenWake()
+                    }
+                }
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             app.registerReceiver(receiver, filter)
         }

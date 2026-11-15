@@ -60,6 +60,7 @@ class IslandOverlayService : Service() {
         pill?.let { IslandOverlayService.applyLive(it) }
         IslandMonitors.watchPhone(this)
         IslandMonitors.watchBattery(this)
+        IslandMonitors.watchScreen(this)
         IslandNotificationListener.instance?.resync()
         return START_STICKY
     }
@@ -282,6 +283,10 @@ class IslandOverlayService : Service() {
 
         @Volatile var instance: IslandOverlayService? = null
         @Volatile var useMic: Boolean = false
+
+        fun onScreenWake() {
+            instance?.pill?.onScreenWake()
+        }
 
         fun start(context: Context) {
             val intent = Intent(context, IslandOverlayService::class.java)

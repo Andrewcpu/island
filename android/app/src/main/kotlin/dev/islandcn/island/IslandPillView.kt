@@ -52,6 +52,8 @@ class IslandPillView(context: Context) : View(context) {
     private var appliedW = Int.MIN_VALUE
     private var appliedH = Int.MIN_VALUE
     private var posted = false
+    private var wakeUntil = 0L
+    private var wakeGen = 0
     private var clock0 = 0L
     private var pressedButton: String? = null
     private val hits = IslandModes.Hits()
@@ -101,9 +103,14 @@ class IslandPillView(context: Context) : View(context) {
         val t = (SystemClock.uptimeMillis() - clock0) / 1000.0
         advance()
         rig.sync(t)
+        if (wakeUntil > 0L && SystemClock.elapsedRealtime() >= wakeUntil) {
+            val gen = wakeGen
+            wakeUntil = 0L
+            if (rig.wakeCurrent(gen)) rig.collapse()
+        }
         publish()
         invalidate()
-        if (rig.animating || ticking()) kick()
+        if (rig.animating || ticking() || wakeUntil > SystemClock.elapsedRealtime()) kick()
     }
 
     init {
@@ -117,6 +124,16 @@ class IslandPillView(context: Context) : View(context) {
     fun windowFrame(): IntArray {
         publish()
         return intArrayOf(appliedL, appliedT, appliedW.coerceAtLeast(1), appliedH.coerceAtLeast(1))
+    }
+
+    /** Screen went from off to on. Open the current activity for about two seconds. */
+    fun onScreenWake() {
+        if (clock0 == 0L) clock0 = SystemClock.uptimeMillis()
+        val t = (SystemClock.uptimeMillis() - clock0) / 1000.0
+        val gen = rig.beginWake(t) ?: return
+        wakeGen = gen
+        wakeUntil = SystemClock.elapsedRealtime() + 2000L
+        kick()
     }
 
     fun bindCutout() {
