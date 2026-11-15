@@ -624,6 +624,8 @@ class IslandPillView(context: Context) : View(context) {
                     mark = second.glyph,
                     playing = bubblePlaying,
                     icon = second.icon,
+                    charge = second.value,
+                    charging = second.title == "Charging" || second.title == "Charged",
                 )
             }
         }

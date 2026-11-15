@@ -4,8 +4,10 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import androidx.core.content.ContextCompat
@@ -99,7 +101,7 @@ internal object IslandModes {
         return (48.0 + (lines - 1) * 18.0).coerceIn(48.0, 140.0)
     }
 
-    fun drawBubble(canvas: Canvas, id: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int, art: Bitmap? = null, mark: String = "", playing: Boolean = false, icon: Bitmap? = null) {
+    fun drawBubble(canvas: Canvas, id: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int, art: Bitmap? = null, mark: String = "", playing: Boolean = false, icon: Bitmap? = null, charge: String = "", charging: Boolean = false) {
         val lead = DRect(bubble.left + 6.42, bubble.centerY - 11, bubble.left + 28.42, bubble.centerY + 11)
         if (icon != null) {
             cover(canvas, icon, lead, 6f, alpha)
@@ -113,6 +115,7 @@ internal object IslandModes {
             }
             "upload", "transfer" -> ring(canvas, DRect(bubble.centerX - 10, bubble.centerY - 10, bubble.centerX + 10, bubble.centerY + 10), progress, accent, 0x29FFFFFF, 2.6f, alpha)
             "recording" -> meter(canvas, DRect(bubble.centerX - 11, bubble.centerY - 8, bubble.centerX + 11, bubble.centerY + 8), accent, 5, 2f, 2f, now, alpha, playing = true)
+            "battery" -> batteryGlyph(canvas, bubble, charge, charging, accent, alpha)
             else -> glyph(canvas, if (id == "call" && mark == "missed") "missed" else bubbleGlyph(id, accent), lead, if (mark == "missed") Color.WHITE else accent, alpha)
         }
     }
@@ -718,6 +721,62 @@ internal object IslandModes {
             canvas.drawRoundRect(RectF(x, top, x + bar, top + h), bar / 2, bar / 2, fill)
             x += bar + gap
         }
+    }
+
+    /**
+     * islandcn `BatteryGlyph` as the split bubble draws it: a solid rounded body, charge from the
+     * left, no outline and no bolt. Charging fills mint to lime over a deep green empty body.
+     * Otherwise the fill is the ink colour and the empty body and nub are that colour at 42%.
+     */
+    private fun batteryGlyph(canvas: Canvas, bubble: DRect, percent: String, charging: Boolean, color: Int, alpha: Int) {
+        val level = (percent.removeSuffix("%").toFloatOrNull()?.div(100f) ?: 0f).coerceIn(0f, 1f)
+        val width = min(27.0, bubble.width - 6.0).toFloat().coerceAtLeast(16f)
+        val scale = width / 36.1f
+        val nubW = 1.9f * scale
+        val nubH = 5.8f * scale
+        val gap = 1.2f * scale
+        val bodyW = width - nubW - gap
+        val bodyH = 17f * scale
+        val radius = 5f * scale
+        val left = bubble.centerX.toFloat() - width / 2f
+        val top = bubble.centerY.toFloat() - bodyH / 2f
+        val empty = if (charging) 0xFF2E7124.toInt() else color
+        val emptyAlpha = if (charging) alpha else (alpha * 0.42f).toInt()
+        fill.shader = null
+        fill.color = empty
+        fill.alpha = emptyAlpha
+        canvas.drawRoundRect(RectF(left, top, left + bodyW, top + bodyH), radius, radius, fill)
+        val fillScale = level.coerceAtLeast(0.06f)
+        val body = android.graphics.Path()
+        body.addRoundRect(RectF(left, top, left + bodyW, top + bodyH), radius, radius, android.graphics.Path.Direction.CW)
+        canvas.save()
+        canvas.clipPath(body)
+        canvas.translate(left, top)
+        canvas.scale(fillScale, 1f)
+        if (charging) {
+            fill.shader = LinearGradient(
+                0f, 0f, bodyW, 0f,
+                intArrayOf(0xFF5AFEB6.toInt(), 0xFF62FD6B.toInt(), 0xFF63FF39.toInt()),
+                floatArrayOf(0f, 0.5f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+            fill.alpha = alpha
+        } else {
+            fill.shader = null
+            fill.color = color
+            fill.alpha = alpha
+        }
+        canvas.drawRoundRect(RectF(0f, 0f, bodyW, bodyH), radius, radius, fill)
+        fill.shader = null
+        canvas.restore()
+        fill.color = empty
+        fill.alpha = emptyAlpha
+        canvas.drawRoundRect(
+            RectF(left + bodyW + gap, top + (bodyH - nubH) / 2f, left + bodyW + gap + nubW, top + (bodyH + nubH) / 2f),
+            nubW / 2f,
+            nubW / 2f,
+            fill,
+        )
     }
 
     private fun batteryRow(canvas: Canvas, rect: DRect, percent: String, accent: Int, charging: Boolean, alpha: Int) {
