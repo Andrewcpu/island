@@ -141,6 +141,21 @@ class IslandOverlayService : Service() {
                 setFitInsetsSides(0)
                 setFitInsetsIgnoringVisibility(true)
             }
+            // Resize changes the origin. Without this, WindowManager runs window_animation
+            // and slides the surface (leash from the old origin to the new one).
+            disableMoveAnimation()
+        }
+    }
+
+    /** PRIVATE_FLAG_NO_MOVE_ANIMATION is @hide. Set it by name so a resize does not animate. */
+    private fun WindowManager.LayoutParams.disableMoveAnimation() {
+        try {
+            val type = WindowManager.LayoutParams::class.java
+            val flags = type.getField("privateFlags")
+            val noMove = type.getField("PRIVATE_FLAG_NO_MOVE_ANIMATION")
+            flags.setInt(this, flags.getInt(this) or noMove.getInt(null))
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not set PRIVATE_FLAG_NO_MOVE_ANIMATION", error)
         }
     }
 
@@ -165,6 +180,7 @@ class IslandOverlayService : Service() {
         params.y = nextY
         params.width = nextW
         params.height = nextH
+        params.disableMoveAnimation()
         try {
             manager.updateViewLayout(view, params)
             appliedX = nextX
@@ -187,6 +203,7 @@ class IslandOverlayService : Service() {
         if (delta <= 1) return
         shiftY = delta
         params.y -= delta
+        params.disableMoveAnimation()
         try {
             window?.updateViewLayout(host, params)
             appliedY = params.y
