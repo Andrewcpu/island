@@ -285,19 +285,12 @@ class IslandOverlayService : Service() {
         @Volatile var instance: IslandOverlayService? = null
         @Volatile var useMic: Boolean = false
 
-        fun onScreenOff() {
-            instance?.pill?.setScreenLit(false)
-        }
-
-        /** Border and halo follow the screen and the dream. No peek. */
+        /**
+         * Apply the border and halo. A rising edge, borderless to bordered, peeks.
+         * An already bordered pill does not.
+         */
         fun syncChrome() {
             instance?.pill?.setScreenLit(IslandMonitors.screenLit())
-        }
-
-        fun onScreenWake() {
-            val view = instance?.pill ?: return
-            view.setScreenLit(IslandMonitors.screenLit())
-            view.onScreenWake()
         }
 
         fun start(context: Context) {

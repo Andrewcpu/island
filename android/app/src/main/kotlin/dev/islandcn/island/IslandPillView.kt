@@ -131,8 +131,9 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     /**
-     * Screen off draws a flat pill: no keyline, no drop shadow, and no elevation halo.
-     * Screen on keeps the border and the shadow exactly as they are.
+     * Screen off, AOD, and the screensaver draw a flat pill: no keyline, shadow, or halo.
+     * A pill that was already bordered stays as it is.
+     * Gaining the border is the wake: expand a visible activity for about two seconds.
      */
     fun setScreenLit(on: Boolean) {
         if (screenLit == on) return
@@ -156,9 +157,10 @@ class IslandPillView(context: Context) : View(context) {
         if (Build.VERSION.SDK_INT >= 31) setRenderEffect(null)
         invalidate()
         kick()
+        if (on) onScreenWake()
     }
 
-    /** Screen went from off to on. Open the current activity for about two seconds. */
+    /** The border just came back. Open the current activity for about two seconds. */
     fun onScreenWake() {
         if (clock0 == 0L) clock0 = SystemClock.uptimeMillis()
         val t = (SystemClock.uptimeMillis() - clock0) / 1000.0
