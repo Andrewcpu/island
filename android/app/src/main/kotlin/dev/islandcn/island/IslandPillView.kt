@@ -9,6 +9,7 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.Choreographer
@@ -55,6 +56,8 @@ class IslandPillView(context: Context) : View(context) {
     private var wakeUntil = 0L
     private var wakeGen = 0
     private var screenLit = true
+    private var keptAmbient: Int? = null
+    private var keptSpot: Int? = null
     private var clock0 = 0L
     private var pressedButton: String? = null
     private val hits = IslandModes.Hits()
@@ -127,10 +130,30 @@ class IslandPillView(context: Context) : View(context) {
         return intArrayOf(appliedL, appliedT, appliedW.coerceAtLeast(1), appliedH.coerceAtLeast(1))
     }
 
-    /** The keyline is the border. It is drawn only while the screen is on. */
+    /**
+     * Screen off draws a flat pill: no keyline, no drop shadow, and no elevation halo.
+     * Screen on keeps the border and the shadow exactly as they are.
+     */
     fun setScreenLit(on: Boolean) {
         if (screenLit == on) return
         screenLit = on
+        elevation = 0f
+        translationZ = 0f
+        stateListAnimator = null
+        if (Build.VERSION.SDK_INT >= 28) {
+            if (!on) {
+                if (keptAmbient == null) {
+                    keptAmbient = outlineAmbientShadowColor
+                    keptSpot = outlineSpotShadowColor
+                }
+                outlineAmbientShadowColor = Color.TRANSPARENT
+                outlineSpotShadowColor = Color.TRANSPARENT
+            } else {
+                keptAmbient?.let { outlineAmbientShadowColor = it }
+                keptSpot?.let { outlineSpotShadowColor = it }
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 31) setRenderEffect(null)
         invalidate()
         kick()
     }
@@ -567,6 +590,7 @@ class IslandPillView(context: Context) : View(context) {
         canvas.translate(-origin[0], -origin[1])
         canvas.scale(density, density)
         val expand = ((pill.height - 36.85) / (84.0 - 36.85)).coerceIn(0.0, 1.0)
+        black.isAntiAlias = screenLit
         canvas.drawPath(continuousRect(rig.sensor, rig.sensor.height / 2, 0.72), black)
         val shell = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
         // The other half stays until it has slid under the main bar and the two are one shape.
@@ -590,7 +614,7 @@ class IslandPillView(context: Context) : View(context) {
         }
         drawBubbleContent(canvas, bubble)
         around(canvas, pill, rig.pillScale.pos.toFloat()) {
-            if (expand > 0.02) {
+            if (screenLit && expand > 0.02) {
                 shadow.alpha = (90 * expand).toInt()
                 canvas.save()
                 canvas.translate(0f, (8.0 * expand).toFloat())
