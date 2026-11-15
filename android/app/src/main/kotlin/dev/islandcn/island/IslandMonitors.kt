@@ -16,6 +16,8 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.CalendarContract
 import android.telecom.TelecomManager
@@ -31,6 +33,9 @@ object IslandMonitors {
     private var screenWatching = false
     private var screenOff = false
     private var dreaming = false
+    /** True only after the display has settled fully on. AOD and doze are not. */
+    private var fullyOn = true
+    private var displayState = Display.STATE_UNKNOWN
     private var wasCharging = false
     private var batteryBaseline = false
     private var recorder: AudioRecord? = null
@@ -118,7 +123,10 @@ object IslandMonitors {
     }
 
     /**
-     * Off, then on, peeks the island. A screen that is already on does not.
+     * A full off-to-on peeks the island, and so does tap to wake leaving AOD.
+     * Tap to wake often stays in doze and never sends screen-on, so a display
+     * leaving doze for on, or user-present after AOD, peeks the same way.
+     * A screen that is already fully on does not peek again.
      * The first reading only records the current state.
      * A dream (screensaver) hides the border and halo the same way the screen
      * being off does, and does not peek. Chrome returns when the dream stops
@@ -132,10 +140,17 @@ object IslandMonitors {
         val app = context.applicationContext
         val power = app.getSystemService(PowerManager::class.java)
         screenOff = power?.isInteractive == false
+        displayState = app.getSystemService(DisplayManager::class.java)
+            ?.getDisplay(Display.DEFAULT_DISPLAY)
+            ?.state
+            ?: Display.STATE_UNKNOWN
+        if (isDark(displayState)) screenOff = true
+        fullyOn = !screenOff && !isDark(displayState)
         dreaming = dreamRunning(app)
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
             addAction(Intent.ACTION_DREAMING_STARTED)
             addAction(Intent.ACTION_DREAMING_STOPPED)
         }
@@ -144,12 +159,15 @@ object IslandMonitors {
                 when (intent?.action) {
                     Intent.ACTION_SCREEN_OFF -> {
                         screenOff = true
+                        fullyOn = false
                         IslandOverlayService.onScreenOff()
                     }
-                    Intent.ACTION_SCREEN_ON -> {
-                        if (!screenOff) return
-                        screenOff = false
-                        IslandOverlayService.onScreenWake()
+                    Intent.ACTION_SCREEN_ON -> wakeFromRest()
+                    Intent.ACTION_USER_PRESENT -> {
+                        if (dreaming || (fullyOn && !screenOff)) return
+                        val interactive = power?.isInteractive != false
+                        if (!interactive && !displayOn(app)) return
+                        wakeFromRest()
                     }
                     Intent.ACTION_DREAMING_STARTED -> {
                         dreaming = true
@@ -157,7 +175,13 @@ object IslandMonitors {
                     }
                     Intent.ACTION_DREAMING_STOPPED -> {
                         dreaming = false
-                        if (power?.isInteractive == false || !displayOn(app)) screenOff = true
+                        if (power?.isInteractive == false || !displayOn(app)) {
+                            fullyOn = false
+                            screenOff = true
+                        } else {
+                            fullyOn = true
+                            screenOff = false
+                        }
                         IslandOverlayService.syncChrome()
                     }
                 }
@@ -168,7 +192,48 @@ object IslandMonitors {
         } else {
             app.registerReceiver(receiver, filter)
         }
+        app.getSystemService(DisplayManager::class.java)?.registerDisplayListener(
+            object : DisplayManager.DisplayListener {
+                override fun onDisplayAdded(displayId: Int) {}
+                override fun onDisplayRemoved(displayId: Int) {}
+                override fun onDisplayChanged(displayId: Int) {
+                    if (displayId != Display.DEFAULT_DISPLAY) return
+                    noteDisplay(app)
+                }
+            },
+            Handler(Looper.getMainLooper()),
+        )
     }
+
+    /** Power-button screen-on and tap-to-wake share one peek. Already on does nothing. */
+    private fun wakeFromRest() {
+        if (dreaming) return
+        if (fullyOn && !screenOff) return
+        fullyOn = true
+        screenOff = false
+        IslandOverlayService.onScreenWake()
+    }
+
+    private fun noteDisplay(app: Context) {
+        val next = app.getSystemService(DisplayManager::class.java)
+            ?.getDisplay(Display.DEFAULT_DISPLAY)
+            ?.state
+            ?: return
+        val prev = displayState
+        if (next == prev) return
+        displayState = next
+        if (isDark(next)) {
+            fullyOn = false
+            screenOff = true
+            IslandOverlayService.onScreenOff()
+            return
+        }
+        val leavingRest = isDark(prev) || (screenOff && prev != Display.STATE_ON)
+        if (next == Display.STATE_ON && leavingRest) wakeFromRest()
+    }
+
+    private fun isDark(state: Int): Boolean =
+        state == Display.STATE_OFF || state == Display.STATE_DOZE || state == Display.STATE_DOZE_SUSPEND
 
     /** True only for a fully lit display. Doze and off, including AOD, are dark. */
     private fun displayOn(app: Context): Boolean {
