@@ -936,7 +936,7 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     private fun specOf(face: Face): Spec {
-        val (leadW, trailW) = when (face.id) {
+        val preset = when (face.id) {
             "timer", "timer-done" -> 22.0 to 48.0
             "now-playing" -> 22.0 to 24.0
             "call" -> if (face.value == "Ring" || face.value == "Missed") 22.0 to 22.0 else 66.0 to 66.0
@@ -957,8 +957,13 @@ class IslandPillView(context: Context) : View(context) {
                 lead to trail
             }
         }
+        val caption = IslandModes.compactCaption(face.title, face.detail, face.value, face.trail)
+        // An icon takes the leading ear and the short label sits in the trailing one. Glyph-only
+        // ears keep their preset box so a missed-call mark does not swell into the label's width.
+        val captionInTrail = face.icon != null && face.id != "live" && face.id != "now-playing" && face.id != "battery" && face.id != "upload" && face.id != "transfer"
+        val trailW = if (captionInTrail && caption.isNotEmpty()) max(preset.second, IslandModes.compactTextWidth(caption)) else preset.second
         val chargeText = if (face.id == "battery") IslandModes.percentWidth(face.value) else 0.0
-        return Spec(face.id, face.priority, 0, face.group, leadW, trailW, face.minimal, face.body, chargeText)
+        return Spec(face.id, face.priority, 0, face.group, preset.first, trailW, face.minimal, face.body, chargeText)
     }
 
     private fun reveal(): Float {

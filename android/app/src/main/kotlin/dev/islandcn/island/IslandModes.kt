@@ -103,6 +103,46 @@ internal object IslandModes {
         return (48.0 + (lines - 1) * 18.0).coerceIn(48.0, 140.0)
     }
 
+    /**
+     * The compact ear's words: a short status, title, or category. The longer body stays on the
+     * expanded card, so a narrow ear never has to cut "Declining spam call" down to an ellipsis.
+     */
+    fun compactCaption(title: String, detail: String, value: String, trail: String): String {
+        fun clean(raw: String) = raw.trim().lineSequence().firstOrNull().orEmpty().trim()
+        val status = clean(value).ifEmpty { clean(trail) }
+        if (status.isNotEmpty() && status.length <= 18) return status
+        val head = clean(title)
+        val body = clean(detail)
+        if (head.isNotEmpty() && head.length <= 18 && !head.equals(body, ignoreCase = true)) return head
+        if (head.isNotEmpty()) {
+            val word = head.substringBefore(' ')
+            if (word.isNotEmpty() && word.length <= 18) return word
+        }
+        return ""
+    }
+
+    /** Width of [compactCaption], plus a little so the last glyph is not clipped. */
+    fun compactTextWidth(caption: String): Double {
+        if (caption.isEmpty()) return 0.0
+        return (compact.measureText(caption) + 4f).toDouble().coerceAtMost(72.0)
+    }
+
+    /**
+     * Expanded card height: the content's bottom edge plus the same bottom padding, never a fixed
+     * tall body. Two-line rows stay near the 84 minimum. Players and rides keep the room they draw.
+     */
+    fun expandedHeight(id: String?, body: Double): Double {
+        val pad = 18.35
+        val end = when (id) {
+            "now-playing" -> 160.0
+            "eta" -> 146.0
+            "message" -> 76.0 + (body - 48.0).coerceAtLeast(0.0)
+            "timer", "timer-done" -> 80.0
+            else -> 70.0
+        }
+        return (end + pad).coerceIn(84.0, 180.0)
+    }
+
     fun drawBubble(canvas: Canvas, id: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int, art: Bitmap? = null, mark: String = "", playing: Boolean = false, icon: Bitmap? = null, charge: String = "", charging: Boolean = false) {
         val lead = DRect(bubble.left + 6.42, bubble.centerY - 11, bubble.left + 28.42, bubble.centerY + 11)
         if (icon != null) {
@@ -143,7 +183,7 @@ internal object IslandModes {
         val trailRect = trailing
         if (icon != null) {
             cover(canvas, icon, lead, 6f, alpha)
-            val caption = trail.ifEmpty { valueText }
+            val caption = if (id == "upload" || id == "transfer" || id == "live" || id == "now-playing") "" else compactCaption(titleText, detail, valueText, trail)
             if (trailRect != null && caption.isNotEmpty()) textIn(canvas, caption, compact, if (id == "timer" || id == "timer-done") accent else Color.WHITE, trailRect, true, alpha)
             if ((id == "upload" || id == "transfer") && trailRect != null) ring(canvas, trailRect, progress, accent, 0x29FFFFFF, 2.6f, alpha, if (id == "upload") valueText.removeSuffix("%") else null)
             return
@@ -204,8 +244,9 @@ internal object IslandModes {
                 textIn(canvas, trail, compact, accent, trailRect, true, alpha)
             }
             else -> {
-                textIn(canvas, titleText, compact, Color.WHITE, lead, false, alpha)
-                textIn(canvas, trail, compact, accent, trailRect, true, alpha)
+                val caption = compactCaption(titleText, detail, valueText, trail)
+                textIn(canvas, caption, compact, Color.WHITE, lead, false, alpha)
+                if (trail.isNotEmpty() && trail != caption) textIn(canvas, trail, compact, accent, trailRect, true, alpha)
             }
         }
     }

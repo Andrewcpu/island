@@ -648,7 +648,8 @@ internal class IslandRig {
             }
             Kind.EXPANDED -> {
                 val half = (min(screenWidth, 402.0) - 2 * 13.83) / 2
-                val height = (measure.expandedBody + 18.18 + 18.35).coerceIn(84.0, 180.0)
+                val focus = (expandedId?.let { byId[it] }) ?: visible().firstOrNull()
+                val height = IslandModes.expandedHeight(focus?.id, focus?.expandedBody ?: measure.expandedBody)
                 Shape(-half, half, expandedTop, height, 47.9, half - compactHeight, half, 0.0)
             }
         }
@@ -934,7 +935,7 @@ internal class IslandRig {
                 leading = DRect(pill.left + 6.59, pill.centerY - 11, pill.left + 6.59 + w, pill.centerY + 11)
             }
             if (first.trailing > 0) {
-                val w = min(first.trailing, 48.0)
+                val w = min(first.trailing, 72.0)
                 val left = sensor.left - 8.18 - w
                 trailing = DRect(left, pill.centerY - 10, left + w, pill.centerY + 10)
             }
