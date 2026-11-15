@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'theme.dart';
+import 'ui/settings_ui.dart';
 import 'ui/setup.dart';
 
 Future<void> main() async {
@@ -9,10 +9,10 @@ Future<void> main() async {
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.light,
-    statusBarBrightness: Brightness.dark,
-    systemNavigationBarColor: IslandColors.page,
-    systemNavigationBarIconBrightness: Brightness.light,
+    statusBarIconBrightness: Brightness.dark,
+    statusBarBrightness: Brightness.light,
+    systemNavigationBarColor: SettingsColors.background,
+    systemNavigationBarIconBrightness: Brightness.dark,
   ));
   runApp(const SetupApp());
 }
@@ -26,9 +26,13 @@ class SetupApp extends StatelessWidget {
       title: 'Island',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: IslandColors.page,
-        colorScheme: const ColorScheme.dark(primary: IslandColors.lagoon, surface: IslandColors.page),
+        useMaterial3: true,
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: SettingsColors.background,
+        colorScheme: const ColorScheme.light(
+          primary: SettingsColors.label,
+          surface: SettingsColors.background,
+        ),
         fontFamily: 'Roboto',
       ),
       home: const SetupPage(),

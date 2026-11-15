@@ -95,6 +95,14 @@ class IslandNotificationListener : NotificationListenerService() {
         }
         releaseCall(key)
         if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
+        val percent = percentProgress(notification)
+        if (percent != null) {
+            publishChanged(drop(key, keep = "progress"))
+            progressNotes[key] = percent
+            rememberIcon(key, sbn)
+            publishProgress()
+            return
+        }
         if (isTimer(sbn)) {
             val remaining = remaining(notification) ?: return
             publishChanged(drop(key, keep = "timer"))
@@ -411,6 +419,28 @@ class IslandNotificationListener : NotificationListenerService() {
         return sender to body
     }
 
+    /** A percent in the title, text, or subtext, from any app: "72%" or "Charge: 72%". */
+    private fun percentProgress(notification: Notification): ProgressNote? {
+        val fields = listOf(
+            textExtra(notification, Notification.EXTRA_TITLE),
+            textExtra(notification, Notification.EXTRA_TEXT),
+            textExtra(notification, Notification.EXTRA_SUB_TEXT),
+        )
+        var percent: Int? = null
+        for (field in fields) {
+            val match = PERCENT.find(field) ?: continue
+            val value = match.groupValues[1].toIntOrNull() ?: continue
+            if (value in 0..100) {
+                percent = value
+                break
+            }
+        }
+        val found = percent ?: return null
+        val title = textExtra(notification, Notification.EXTRA_TITLE).ifEmpty { "Progress" }
+        val detail = textExtra(notification, Notification.EXTRA_TEXT).ifEmpty { textExtra(notification, Notification.EXTRA_SUB_TEXT) }
+        return ProgressNote(title, detail, found / 100f, "$found%")
+    }
+
     private fun liveProgress(notification: Notification): ProgressNote? {
         if (!live(notification)) return null
         val extras = notification.extras
@@ -466,6 +496,7 @@ class IslandNotificationListener : NotificationListenerService() {
         private const val CHRONOMETER_COUNT_DOWN = "android.chronometerCountDown"
         private const val DAY = 24L * 60L * 60L * 1000L
         private val CLOCK = Regex("""(\d+):(\d{2})(?::(\d{2}))?""")
+        private val PERCENT = Regex("""(\d{1,3})\s?%""")
         private val clockPackages = setOf(
             "com.google.android.deskclock",
             "com.android.deskclock",

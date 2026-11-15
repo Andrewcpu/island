@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../platform.dart';
-import '../theme.dart';
 import 'notifications_page.dart';
+import 'settings_ui.dart';
 
 class SetupPage extends StatefulWidget {
   const SetupPage({super.key});
@@ -51,185 +51,153 @@ class _SetupPageState extends State<SetupPage> with WidgetsBindingObserver {
     await platform.command(name, args);
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final overlay = _on('overlay');
-    final above = _on('accessibility');
-    return Scaffold(
-      backgroundColor: IslandColors.page,
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+  Future<void> _pickMotion() async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reduced motion'),
+        contentPadding: const EdgeInsets.only(top: 12, bottom: 8),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Island', style: TextStyle(color: Colors.white, fontSize: 34, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            Text(
-              above
-                  ? 'Island is on in Accessibility, so the pill draws above the status bar. You can leave this screen.'
-                  : 'Turn on Island in Accessibility. That puts the pill above the status bar. Until then, display-over-apps keeps it behind the status bar.',
-              style: const TextStyle(color: IslandColors.secondary, fontSize: 15, height: 1.35),
-            ),
-            const SizedBox(height: 18),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Active notifications', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-              subtitle: const Text('Every notification on the phone right now', style: TextStyle(color: IslandColors.secondary)),
-              trailing: const Icon(Icons.chevron_right, color: IslandColors.secondary),
-              onTap: () {
-                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationsPage()));
-              },
-            ),
-            const SizedBox(height: 8),
-            if (!above)
-              FilledButton(
-                onPressed: platform.openAccessibilitySettings,
-                child: const Text('Enable Island in Accessibility'),
+            for (final option in const [
+              ('system', 'System'),
+              ('always', 'Always'),
+              ('never', 'Never'),
+            ])
+              RadioListTile<String>(
+                value: option.$1,
+                groupValue: reduced,
+                title: Text(option.$2),
+                onChanged: (value) => Navigator.of(context).pop(value),
               ),
-            const SizedBox(height: 16),
-            const _Heading('Permissions'),
-            _Row('Above the status bar', above, 'Enable', platform.openAccessibilitySettings),
-            _Row('Display over apps', overlay, 'Allow', platform.openOverlaySettings),
-            _Row('Notifications', _on('POST_NOTIFICATIONS'), 'Allow', () => platform.request(['android.permission.POST_NOTIFICATIONS'])),
-            _Row('Phone', _on('READ_PHONE_STATE') && _on('ANSWER_PHONE_CALLS') && _on('READ_CALL_LOG') && _on('READ_CONTACTS'), 'Allow', () => platform.request(['android.permission.READ_PHONE_STATE', 'android.permission.ANSWER_PHONE_CALLS', 'android.permission.READ_CALL_LOG', 'android.permission.READ_CONTACTS'])),
-            _Row('Messages', _on('notificationAccess'), 'Allow', platform.openNotificationAccess),
-            _Row('SMS', _on('READ_SMS') && _on('RECEIVE_SMS'), 'Allow', () => platform.request(['android.permission.READ_SMS', 'android.permission.RECEIVE_SMS'])),
-            _Row('Calendar', _on('READ_CALENDAR'), 'Allow', () => platform.request(['android.permission.READ_CALENDAR'])),
-            _Row('Microphone', _on('RECORD_AUDIO'), 'Allow', () => platform.request(['android.permission.RECORD_AUDIO'])),
-            const SizedBox(height: 18),
-            const _Heading('Try an activity'),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _Chip('Timer', () => _command('startTimer')),
-                _Chip('Music', () => _command('playSample')),
-                _Chip('Call', () => _command('incomingCall', {'caller': 'Mochi'})),
-                _Chip('Ride', () => _command('startEta', {'kind': 'ride'})),
-                _Chip('Delivery', () => _command('startEta', {'kind': 'delivery'})),
-                _Chip('Record', () => _command('startRecording', {'kind': 'audio'})),
-                _Chip('Screen', () => _command('startRecording', {'kind': 'screen'})),
-                _Chip('Camera', () => _command('startRecording', {'kind': 'camera'})),
-                _Chip('Send', () => _command('startTransfer', {'direction': 'send'})),
-                _Chip('Receive', () => _command('startTransfer', {'direction': 'receive'})),
-                _Chip('Upload', () => _command('startUpload')),
-                _Chip('Message', () => _command('showMessage', {'sender': 'Sam', 'body': 'The photos are in. Take a look when you can.'})),
-                _Chip('Event', () => _command('pinEvent')),
-                _Chip('Battery', () => _command('showBattery')),
-                _Chip('Split', () => _command('split')),
-                _Chip('Orders', () => _command('startOrders')),
-                _Chip('Handoff', () => _command('handoff')),
-                _Chip('Clear', () => _command('clear')),
-              ],
-            ),
-            const SizedBox(height: 18),
-            const _Heading('Island'),
-            _Setting(
-              label: 'Reduced motion',
-              child: DropdownButton<String>(
-                value: reduced,
-                dropdownColor: IslandColors.card,
-                style: const TextStyle(color: Colors.white),
-                items: const [
-                  DropdownMenuItem(value: 'system', child: Text('System')),
-                  DropdownMenuItem(value: 'always', child: Text('Always')),
-                  DropdownMenuItem(value: 'never', child: Text('Never')),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  setState(() => reduced = value);
-                  _command('setReduced', {'value': value});
-                },
-              ),
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Keyline', style: TextStyle(color: Colors.white)),
-              subtitle: const Text('Thin rim on a dark page', style: TextStyle(color: IslandColors.secondary)),
-              value: keyline,
-              activeThumbColor: IslandColors.lagoon,
-              onChanged: (value) {
-                setState(() => keyline = value);
-                _command('setKeyline', {'value': value});
-              },
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Tap a sample again, or Clear, to dismiss that preview. A live call, message, timer, or playing session stays, and replaces a preview of the same kind. Hold the island to expand. A tap outside collapses it and still reaches the app underneath.',
-              style: TextStyle(color: IslandColors.tertiary, fontSize: 13, height: 1.35),
-            ),
           ],
         ),
       ),
     );
+    if (choice == null) return;
+    setState(() => reduced = choice);
+    await _command('setReduced', {'value': choice});
   }
-}
 
-class _Heading extends StatelessWidget {
-  final String text;
-  const _Heading(this.text);
+  String get _motionLabel => switch (reduced) {
+        'always' => 'Always',
+        'never' => 'Never',
+        _ => 'System',
+      };
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600, letterSpacing: 0.4)),
-    );
-  }
-}
-
-class _Row extends StatelessWidget {
-  final String title;
-  final bool granted;
-  final String action;
-  final VoidCallback onPressed;
-  const _Row(this.title, this.granted, this.action, this.onPressed);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          Expanded(child: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600))),
-          Text(granted ? 'On' : 'Off', style: TextStyle(color: granted ? IslandColors.lagoon : IslandColors.secondary)),
-          const SizedBox(width: 8),
-          TextButton(onPressed: granted ? null : onPressed, child: Text(action)),
-        ],
-      ),
-    );
-  }
-}
-
-class _Chip extends StatelessWidget {
-  final String label;
-  final VoidCallback onPressed;
-  const _Chip(this.label, this.onPressed);
-
-  @override
-  Widget build(BuildContext context) {
-    return ActionChip(
-      label: Text(label),
-      backgroundColor: IslandColors.card,
-      labelStyle: const TextStyle(color: Colors.white),
-      side: const BorderSide(color: IslandColors.cardEdge),
-      onPressed: onPressed,
-    );
-  }
-}
-
-class _Setting extends StatelessWidget {
-  final String label;
-  final Widget child;
-  const _Setting({required this.label, required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
+    final overlay = _on('overlay');
+    final above = _on('accessibility');
+    return SettingsPage(
+      title: 'Island',
       children: [
-        Text(label, style: const TextStyle(color: Colors.white)),
-        const Spacer(),
-        child,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+          child: Text(
+            above
+                ? 'Island is on in Accessibility, so the pill draws above the status bar. You can leave this screen.'
+                : 'Turn on Island in Accessibility. That puts the pill above the status bar. Until then, display-over-apps keeps it behind the status bar.',
+            style: const TextStyle(color: SettingsColors.subtitle, fontSize: 14, height: 1.35),
+          ),
+        ),
+        SettingsSection(
+          label: 'Island',
+          children: [
+            SettingsRow(
+              icon: Icons.notifications_none,
+              title: 'Active notifications',
+              subtitle: 'Every notification on the phone right now',
+              trailing: const Icon(Icons.chevron_right, color: SettingsColors.subtitle),
+              onTap: () {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationsPage()));
+              },
+            ),
+            SettingsCard(
+              child: SwitchListTile(
+                contentPadding: const EdgeInsets.fromLTRB(16, 4, 12, 4),
+                secondary: const Icon(Icons.border_outer, color: SettingsColors.subtitle),
+                title: const Text('Keyline', style: TextStyle(color: SettingsColors.title, fontSize: 16, fontWeight: FontWeight.w500)),
+                subtitle: const Text('Thin rim on a dark page', style: TextStyle(color: SettingsColors.subtitle, fontSize: 14)),
+                value: keyline,
+                onChanged: (value) {
+                  setState(() => keyline = value);
+                  _command('setKeyline', {'value': value});
+                },
+              ),
+            ),
+            SettingsRow(
+              icon: Icons.motion_photos_off_outlined,
+              title: 'Reduced motion',
+              subtitle: _motionLabel,
+              trailing: const Icon(Icons.chevron_right, color: SettingsColors.subtitle),
+              onTap: _pickMotion,
+            ),
+          ],
+        ),
+        SettingsSection(
+          label: 'Permissions',
+          children: [
+            _permit(Icons.accessibility_new, 'Above the status bar', above, platform.openAccessibilitySettings),
+            _permit(Icons.layers_outlined, 'Display over apps', overlay, platform.openOverlaySettings),
+            _permit(Icons.notifications_outlined, 'Notifications', _on('POST_NOTIFICATIONS'), () => platform.request(['android.permission.POST_NOTIFICATIONS'])),
+            _permit(Icons.call_outlined, 'Phone', _on('READ_PHONE_STATE') && _on('ANSWER_PHONE_CALLS') && _on('READ_CALL_LOG') && _on('READ_CONTACTS'), () => platform.request(['android.permission.READ_PHONE_STATE', 'android.permission.ANSWER_PHONE_CALLS', 'android.permission.READ_CALL_LOG', 'android.permission.READ_CONTACTS'])),
+            _permit(Icons.chat_bubble_outline, 'Messages', _on('notificationAccess'), platform.openNotificationAccess),
+            _permit(Icons.sms_outlined, 'SMS', _on('READ_SMS') && _on('RECEIVE_SMS'), () => platform.request(['android.permission.READ_SMS', 'android.permission.RECEIVE_SMS'])),
+            _permit(Icons.calendar_today_outlined, 'Calendar', _on('READ_CALENDAR'), () => platform.request(['android.permission.READ_CALENDAR'])),
+            _permit(Icons.mic_none, 'Microphone', _on('RECORD_AUDIO'), () => platform.request(['android.permission.RECORD_AUDIO'])),
+          ],
+        ),
+        SettingsSection(
+          label: 'Samples',
+          children: [
+            for (final sample in _samples)
+              SettingsRow(
+                icon: sample.$1,
+                title: sample.$2,
+                onTap: sample.$3,
+              ),
+          ],
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(12, 18, 12, 0),
+          child: Text(
+            'Tap a sample again, or Clear, to dismiss that preview. A live call, message, timer, or playing session stays, and replaces a preview of the same kind. Hold the island to expand. A tap outside collapses it and still reaches the app underneath.',
+            style: TextStyle(color: SettingsColors.subtitle, fontSize: 14, height: 1.35),
+          ),
+        ),
       ],
     );
   }
+
+  SettingsRow _permit(IconData icon, String title, bool granted, VoidCallback onPressed) {
+    return SettingsRow(
+      icon: icon,
+      title: title,
+      subtitle: granted ? 'On' : 'Off',
+      onTap: granted ? null : onPressed,
+    );
+  }
+
+  List<(IconData, String, VoidCallback)> get _samples => [
+        (Icons.timer_outlined, 'Timer', () => _command('startTimer')),
+        (Icons.music_note_outlined, 'Music', () => _command('playSample')),
+        (Icons.call, 'Call', () => _command('incomingCall', {'caller': 'Mochi'})),
+        (Icons.local_taxi_outlined, 'Ride', () => _command('startEta', {'kind': 'ride'})),
+        (Icons.local_shipping_outlined, 'Delivery', () => _command('startEta', {'kind': 'delivery'})),
+        (Icons.mic, 'Record', () => _command('startRecording', {'kind': 'audio'})),
+        (Icons.screenshot_monitor_outlined, 'Screen', () => _command('startRecording', {'kind': 'screen'})),
+        (Icons.photo_camera_outlined, 'Camera', () => _command('startRecording', {'kind': 'camera'})),
+        (Icons.upload_outlined, 'Send', () => _command('startTransfer', {'direction': 'send'})),
+        (Icons.download_outlined, 'Receive', () => _command('startTransfer', {'direction': 'receive'})),
+        (Icons.cloud_upload_outlined, 'Upload', () => _command('startUpload')),
+        (Icons.chat_outlined, 'Message', () => _command('showMessage', {'sender': 'Sam', 'body': 'The photos are in. Take a look when you can.'})),
+        (Icons.event_outlined, 'Event', () => _command('pinEvent')),
+        (Icons.battery_charging_full, 'Battery', () => _command('showBattery')),
+        (Icons.splitscreen_outlined, 'Split', () => _command('split')),
+        (Icons.receipt_long_outlined, 'Orders', () => _command('startOrders')),
+        (Icons.swap_horiz, 'Handoff', () => _command('handoff')),
+        (Icons.clear, 'Clear', () => _command('clear')),
+      ];
 }

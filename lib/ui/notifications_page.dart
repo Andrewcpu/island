@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../platform.dart';
-import '../theme.dart';
+import 'settings_ui.dart';
 
 /// Every notification the listener can see, refreshed as they change.
 class NotificationsPage extends StatefulWidget {
@@ -66,53 +66,44 @@ class _NotificationsPageState extends State<NotificationsPage> with WidgetsBindi
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: IslandColors.page,
-      appBar: AppBar(
-        backgroundColor: IslandColors.page,
-        foregroundColor: Colors.white,
-        title: Text(loading ? 'Notifications' : 'Notifications (${notes.length})'),
-        actions: [
-          IconButton(onPressed: _load, tooltip: 'Refresh', icon: const Icon(Icons.refresh)),
-        ],
+    final title = loading ? 'Notifications' : 'Notifications';
+    return SettingsPage(
+      title: title,
+      showBack: true,
+      onRefresh: _load,
+      trailing: IconButton(
+        onPressed: _load,
+        tooltip: 'Refresh',
+        icon: const Icon(Icons.refresh, color: SettingsColors.title),
       ),
-      body: RefreshIndicator(
-        color: IslandColors.lagoon,
-        onRefresh: _load,
-        child: loading && notes.isEmpty && reason == null
-            ? ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: const [
-                  SizedBox(height: 48),
-                  Center(child: CircularProgressIndicator(color: IslandColors.lagoon)),
-                ],
-              )
-            : reason != null
-            ? ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
-                children: [
-                  Text(reason!, style: const TextStyle(color: Colors.white, fontSize: 16, height: 1.35)),
-                  const SizedBox(height: 16),
-                  FilledButton(onPressed: platform.openNotificationAccess, child: const Text('Allow notification access')),
-                ],
-              )
-            : notes.isEmpty
-                ? ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
-                    children: const [
-                      Text('No active notifications.', style: TextStyle(color: IslandColors.secondary, fontSize: 16)),
-                    ],
-                  )
-                : ListView.separated(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-                    itemCount: notes.length,
-                    separatorBuilder: (context, index) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) => _NoteCard(note: notes[index]),
-                  ),
-      ),
+      children: [
+        if (loading && notes.isEmpty && reason == null)
+          const Padding(
+            padding: EdgeInsets.only(top: 48),
+            child: Center(child: CircularProgressIndicator(color: SettingsColors.label)),
+          )
+        else if (reason != null) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: Text(reason!, style: const TextStyle(color: SettingsColors.title, fontSize: 16, height: 1.35)),
+          ),
+          const SizedBox(height: 12),
+          SettingsRow(
+            icon: Icons.notifications_outlined,
+            title: 'Allow notification access',
+            onTap: platform.openNotificationAccess,
+          ),
+        ] else if (notes.isEmpty)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(12, 16, 12, 0),
+            child: Text('No active notifications.', style: TextStyle(color: SettingsColors.subtitle, fontSize: 16)),
+          )
+        else
+          SettingsSection(
+            label: '${notes.length} active',
+            children: [for (final note in notes) _NoteCard(note: note)],
+          ),
+      ],
     );
   }
 }
@@ -135,16 +126,16 @@ class _NoteCard extends StatelessWidget {
     final ongoing = note['ongoing'] == true;
     final live = note['live'] == true;
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       decoration: BoxDecoration(
-        color: IslandColors.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: IslandColors.cardEdge),
+        color: SettingsColors.card,
+        borderRadius: BorderRadius.circular(28),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('${_s(note['app'])}   ${_s(note['package'])}', style: const TextStyle(color: IslandColors.secondary, fontSize: 12)),
+          Text('${_s(note['app'])}   ${_s(note['package'])}', style: const TextStyle(color: SettingsColors.subtitle, fontSize: 12)),
           const SizedBox(height: 6),
           _line('Title', _s(note['title'])),
           _line('Text', _s(note['text'])),
@@ -186,11 +177,11 @@ class _NoteCard extends StatelessWidget {
               if (_s(note['posted']).isNotEmpty) 'Posted ${_s(note['posted'])}',
               'id ${_s(note['id'])}${_s(note['tag']).isEmpty ? '' : '  tag ${_s(note['tag'])}'}',
             ].join('  ·  '),
-            style: const TextStyle(color: IslandColors.tertiary, fontSize: 12, height: 1.35),
+            style: const TextStyle(color: SettingsColors.subtitle, fontSize: 12, height: 1.35),
           ),
           if (extras.isNotEmpty) ...[
             const SizedBox(height: 10),
-            const Text('Extras', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+            const Text('Extras', style: TextStyle(color: SettingsColors.title, fontSize: 14, fontWeight: FontWeight.w500)),
             const SizedBox(height: 4),
             for (final row in extras)
               Padding(
@@ -198,8 +189,8 @@ class _NoteCard extends StatelessWidget {
                 child: SelectableText.rich(
                   TextSpan(
                     children: [
-                      TextSpan(text: '${row['key']}  ', style: const TextStyle(color: IslandColors.lagoon, fontSize: 12)),
-                      TextSpan(text: '${row['value']}', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                      TextSpan(text: '${row['key']}  ', style: const TextStyle(color: SettingsColors.label, fontSize: 12)),
+                      TextSpan(text: '${row['value']}', style: const TextStyle(color: SettingsColors.title, fontSize: 12)),
                     ],
                   ),
                 ),
@@ -216,8 +207,8 @@ class _NoteCard extends StatelessWidget {
       child: SelectableText.rich(
         TextSpan(
           children: [
-            TextSpan(text: '$label  ', style: const TextStyle(color: IslandColors.secondary, fontSize: 13)),
-            TextSpan(text: value.isEmpty ? '—' : value, style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.3)),
+            TextSpan(text: '$label  ', style: const TextStyle(color: SettingsColors.subtitle, fontSize: 13)),
+            TextSpan(text: value.isEmpty ? '—' : value, style: const TextStyle(color: SettingsColors.title, fontSize: 16, height: 1.3, fontWeight: FontWeight.w500)),
           ],
         ),
       ),
@@ -236,7 +227,7 @@ class _NoteCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Colors.white, fontSize: 14)),
+        Text(label, style: const TextStyle(color: SettingsColors.title, fontSize: 14)),
         if (fraction != null) ...[
           const SizedBox(height: 6),
           ClipRRect(
@@ -244,8 +235,8 @@ class _NoteCard extends StatelessWidget {
             child: LinearProgressIndicator(
               value: fraction,
               minHeight: 6,
-              color: IslandColors.lagoon,
-              backgroundColor: IslandColors.track,
+              color: SettingsColors.label,
+              backgroundColor: SettingsColors.back,
             ),
           ),
         ],
@@ -267,7 +258,7 @@ class _NoteCard extends StatelessWidget {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(color: IslandColors.secondary, fontSize: 12)),
+          Text(label, style: const TextStyle(color: SettingsColors.subtitle, fontSize: 12)),
           const SizedBox(height: 4),
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
@@ -298,10 +289,10 @@ class _Flag extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: on ? const Color(0x3332D74B) : IslandColors.fill,
+        color: on ? const Color(0xFFE6F4EA) : SettingsColors.back,
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Text(label, style: TextStyle(color: on ? IslandColors.green : IslandColors.secondary, fontSize: 12, fontWeight: FontWeight.w600)),
+      child: Text(label, style: TextStyle(color: on ? const Color(0xFF137333) : SettingsColors.subtitle, fontSize: 12, fontWeight: FontWeight.w600)),
     );
   }
 }
