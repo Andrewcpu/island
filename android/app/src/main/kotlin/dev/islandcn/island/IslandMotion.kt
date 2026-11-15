@@ -258,18 +258,13 @@ internal class IslandRig {
     val expanded: Boolean get() = kind == Kind.EXPANDED
 
     /**
-     * The expanded card is what's on screen once its body has opened. Until then a split
-     * keeps the compact face so the layout does not snap at the start of the spring.
+     * Expanded text waits until the card is tall enough to hold it. While a split's other
+     * half is still its own lobe, the face stays the split.
      */
-    fun expandedOpen(): Boolean = kind == Kind.EXPANDED && ::height.isInitialized && height.pos > 56.0
-
     fun look(): Kind {
         if (kind != Kind.EXPANDED) return kind
-        // A leftover split pill must not keep the compact face inside the opened card.
-        // That is what left the expanded body blank with the other icon on the camera.
-        if (expandedOpen()) return Kind.EXPANDED
         if (bubbleHeight.pos >= 0.5) return Kind.MINIMAL
-        if (!absorbLive) return Kind.COMPACT
+        if (height.pos <= 56.0) return Kind.COMPACT
         return Kind.EXPANDED
     }
     val animating: Boolean get() = press != null || sched.isNotEmpty() || tracks().any { it.busy }
@@ -520,6 +515,12 @@ internal class IslandRig {
             for (item in due) item.second()
         }
         for (track in tracks()) track.step(now)
+        // The lobe stays until it sits inside the main pill. Dropping it when the
+        // body merely starts to grow pops the other half off before the merge.
+        if (absorbLive && kind == Kind.EXPANDED && bubbleHeight.pos >= 1.0 && now >= absorbAt + 0.222) {
+            val covered = bubbleLeft.pos >= left.pos - 1.0 && bubbleRight.pos <= right.pos + 1.0
+            if (covered) bubbleHeight.aim(0.0, MotionSpec.tween(0.0), now)
+        }
         if (absorbLive && now > absorbAt + 0.7 && enterAlpha() > 0.98f && !left.busy && !right.busy && !height.busy && !radius.busy) {
             absorbLive = false
             bubbleCutAt = -1.0
@@ -812,12 +813,6 @@ internal class IslandRig {
             }
             bubbleLeft.aim(idle.right - restH, motion(Spring(0.25, 1.0)), now)
             bubbleRight.aim(idle.right, motion(Spring(0.42, 1.0)), now)
-            // The lobe stays drawn until it sits inside the pill (islandcn's step at the turn).
-            schedule(now + 0.222) {
-                if (kind != Kind.EXPANDED) return@schedule
-                val inside = bubbleLeft.pos >= left.pos - 1.0 && bubbleRight.pos <= right.pos + 1.0
-                if (inside) bubbleHeight.aim(0.0, MotionSpec.tween(0.0), now)
-            }
         } else if (transition == Transition.SPLIT) {
             bubbleLeft.aim(target.bubbleLeft, motion(Spring(0.376, 0.811)), now, hold = if (reduced) 0.0 else 0.345)
             if (via > 0) bubbleRight.aim(target.bubbleRight, edge, now, via = idle.bubbleRight, viaDelay = via, viaMotion = edge)

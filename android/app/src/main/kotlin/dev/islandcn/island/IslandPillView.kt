@@ -540,9 +540,26 @@ class IslandPillView(context: Context) : View(context) {
         val expand = ((pill.height - 36.85) / (84.0 - 36.85)).coerceIn(0.0, 1.0)
         canvas.drawPath(continuousRect(rig.sensor, rig.sensor.height / 2, 0.72), black)
         val shell = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
-        // Once this side has opened, the other compact pill is not drawn on the card.
-        // It comes back when the body collapses and expandedOpen() is false again.
-        val bubble = if (rig.expandedOpen()) null else rig.bubble
+        // The other half stays until it has slid under the main bar and the two are one shape.
+        // Painting it first is what puts that lobe behind the bar instead of across its face.
+        val bubble = rig.bubble
+        val bubblePath = bubble?.let { continuousRect(it, it.height / 2, 0.72) }
+        if (bubble != null && bubblePath != null) {
+            around(canvas, bubble, rig.bubbleScale.pos.toFloat()) {
+                canvas.drawPath(bubblePath, black)
+            }
+        }
+        val neckGap = if (rig.tightNeck()) 0.01 else 5.0
+        if (bubble != null) canvas.drawPath(bridgeNeck(pill, bubble, neckGap), black)
+        val shown = rig.look()
+        if (rig.showKeyline && shown != Kind.IDLE && bubble != null && bubblePath != null) {
+            val extra = ((pill.width - rig.sensor.width) / 6.0).coerceIn(0.0, 1.0)
+            keyline.alpha = (0.16 * extra * 255).toInt()
+            if (keyline.alpha > 2) {
+                around(canvas, bubble, rig.bubbleScale.pos.toFloat()) { canvas.drawPath(bubblePath, keyline) }
+            }
+        }
+        drawBubbleContent(canvas, bubble)
         around(canvas, pill, rig.pillScale.pos.toFloat()) {
             if (expand > 0.02) {
                 shadow.alpha = (90 * expand).toInt()
@@ -553,26 +570,14 @@ class IslandPillView(context: Context) : View(context) {
             }
             canvas.drawPath(shell, black)
         }
-        val bubblePath = bubble?.let { continuousRect(it, it.height / 2, 0.72) }
-        if (bubble != null && bubblePath != null) {
-            around(canvas, bubble, rig.bubbleScale.pos.toFloat()) {
-                canvas.drawPath(bubblePath, black)
-            }
-        }
-        val neckGap = if (rig.tightNeck()) 0.01 else 5.0
-        if (bubble != null) canvas.drawPath(bridgeNeck(pill, bubble, neckGap), black)
-        val shown = rig.look()
         if (rig.showKeyline && shown != Kind.IDLE) {
             val extra = ((pill.width - rig.sensor.width) / 6.0).coerceIn(0.0, 1.0)
             keyline.alpha = (0.16 * extra * (if (shown == Kind.EXPANDED) 0.93 else 1.0) * 255).toInt()
             if (keyline.alpha > 2) {
                 around(canvas, pill, rig.pillScale.pos.toFloat()) { canvas.drawPath(shell, keyline) }
-                if (bubble != null && bubblePath != null) {
-                    around(canvas, bubble, rig.bubbleScale.pos.toFloat()) { canvas.drawPath(bubblePath, keyline) }
-                }
             }
         }
-        drawContent(canvas, pill, bubble)
+        drawContent(canvas, pill)
         canvas.restore()
     }
 
@@ -603,7 +608,28 @@ class IslandPillView(context: Context) : View(context) {
         canvas.restore()
     }
 
-    private fun drawContent(canvas: Canvas, pill: DRect, bubble: DRect?) {
+    /** The detached half's icon, drawn before the main bar so a hold carries it underneath. */
+    private fun drawBubbleContent(canvas: Canvas, bubble: DRect?) {
+        if (bubble == null || rig.look() != Kind.MINIMAL) return
+        val second = faces[rig.secondary?.id] ?: return
+        val reveal = reveal()
+        if (reveal <= 0f) return
+        val alpha = (reveal * 255).toInt()
+        around(canvas, bubble, rig.bubbleScale.pos.toFloat()) {
+            val bubblePlaying = second.id == "now-playing" && (mediaTrack?.playing == true || (mediaTrack == null && second.value == "Playing"))
+            drawInside(canvas, continuousRect(bubble, bubble.height / 2, 0.72)) {
+                IslandModes.drawBubble(
+                    canvas, second.id, second.accent, second.progress, bubble, rig.now, alpha,
+                    art = if (second.id == "now-playing") mediaTrack?.art else null,
+                    mark = second.glyph,
+                    playing = bubblePlaying,
+                    icon = second.icon,
+                )
+            }
+        }
+    }
+
+    private fun drawContent(canvas: Canvas, pill: DRect) {
         val look = rig.look()
         val faceId = when (look) {
             Kind.EXPANDED -> rig.shownId()
@@ -614,27 +640,15 @@ class IslandPillView(context: Context) : View(context) {
         if (look == Kind.IDLE) return
         val reveal = reveal()
         if (reveal <= 0f) return
-        val alpha = (reveal * 255).toInt()
+        // Absorb keeps the expanded row at 0 until the card has started opening, then fades it in.
+        val presence = if (look == Kind.EXPANDED) rig.enterAlpha() else 1f
+        val alpha = (reveal * presence * 255).toInt()
+        if (alpha <= 0) return
         around(canvas, pill, rig.pillScale.pos.toFloat()) {
             // clipPath on the opened card was discarding this draw after the window
             // stayed centered. Mask with the same path the shell fills, so the body paints.
             drawInside(canvas, continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)) {
                 paintFace(canvas, face, look, pill, alpha, clip = false, slots = rig.slotRects())
-            }
-        }
-        val second = faces[rig.secondary?.id]
-        if (second != null && bubble != null && look == Kind.MINIMAL) {
-            around(canvas, bubble, rig.bubbleScale.pos.toFloat()) {
-                val bubblePlaying = second.id == "now-playing" && (mediaTrack?.playing == true || (mediaTrack == null && second.value == "Playing"))
-                drawInside(canvas, continuousRect(bubble, bubble.height / 2, 0.72)) {
-                    IslandModes.drawBubble(
-                        canvas, second.id, second.accent, second.progress, bubble, rig.now, alpha,
-                        art = if (second.id == "now-playing") mediaTrack?.art else null,
-                        mark = second.glyph,
-                        playing = bubblePlaying,
-                        icon = second.icon,
-                    )
-                }
             }
         }
     }
