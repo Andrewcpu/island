@@ -118,6 +118,8 @@ object IslandMonitors {
      * Off, then on, peeks the island. A screen that is already on does not.
      * The first reading only records the current state.
      */
+    fun screenLit(): Boolean = !screenOff
+
     fun watchScreen(context: Context) {
         if (screenWatching) return
         screenWatching = true
@@ -131,7 +133,10 @@ object IslandMonitors {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 when (intent?.action) {
-                    Intent.ACTION_SCREEN_OFF -> screenOff = true
+                    Intent.ACTION_SCREEN_OFF -> {
+                        screenOff = true
+                        IslandOverlayService.onScreenOff()
+                    }
                     Intent.ACTION_SCREEN_ON -> {
                         if (!screenOff) return
                         screenOff = false

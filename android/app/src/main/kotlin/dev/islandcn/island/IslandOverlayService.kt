@@ -44,6 +44,7 @@ class IslandOverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         instance = this
         refreshForeground()
+        IslandMonitors.watchScreen(this)
         val accessibility = IslandAccessibilityService.instance
         val overlay = Settings.canDrawOverlays(this)
         if (accessibility == null && !overlay) {
@@ -60,7 +61,6 @@ class IslandOverlayService : Service() {
         pill?.let { IslandOverlayService.applyLive(it) }
         IslandMonitors.watchPhone(this)
         IslandMonitors.watchBattery(this)
-        IslandMonitors.watchScreen(this)
         IslandNotificationListener.instance?.resync()
         return START_STICKY
     }
@@ -82,6 +82,7 @@ class IslandOverlayService : Service() {
             created.onWindow = { left, top, width, height -> applyWindow(left, top, width, height) }
             pill = created
         }
+        view.setScreenLit(IslandMonitors.screenLit())
         view.bindCutout()
         val frame = view.windowFrame()
         val params = layoutParams(frame[2], frame[3]).apply {
@@ -284,8 +285,14 @@ class IslandOverlayService : Service() {
         @Volatile var instance: IslandOverlayService? = null
         @Volatile var useMic: Boolean = false
 
+        fun onScreenOff() {
+            instance?.pill?.setScreenLit(false)
+        }
+
         fun onScreenWake() {
-            instance?.pill?.onScreenWake()
+            val view = instance?.pill ?: return
+            view.setScreenLit(true)
+            view.onScreenWake()
         }
 
         fun start(context: Context) {

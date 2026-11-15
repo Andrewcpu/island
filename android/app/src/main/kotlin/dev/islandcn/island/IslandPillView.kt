@@ -54,6 +54,7 @@ class IslandPillView(context: Context) : View(context) {
     private var posted = false
     private var wakeUntil = 0L
     private var wakeGen = 0
+    private var screenLit = true
     private var clock0 = 0L
     private var pressedButton: String? = null
     private val hits = IslandModes.Hits()
@@ -124,6 +125,14 @@ class IslandPillView(context: Context) : View(context) {
     fun windowFrame(): IntArray {
         publish()
         return intArrayOf(appliedL, appliedT, appliedW.coerceAtLeast(1), appliedH.coerceAtLeast(1))
+    }
+
+    /** The keyline is the border. It is drawn only while the screen is on. */
+    fun setScreenLit(on: Boolean) {
+        if (screenLit == on) return
+        screenLit = on
+        invalidate()
+        kick()
     }
 
     /** Screen went from off to on. Open the current activity for about two seconds. */
@@ -572,7 +581,7 @@ class IslandPillView(context: Context) : View(context) {
         val neckGap = if (rig.tightNeck()) 0.01 else 5.0
         if (bubble != null) canvas.drawPath(bridgeNeck(pill, bubble, neckGap), black)
         val shown = rig.look()
-        if (rig.showKeyline && shown != Kind.IDLE && bubble != null && bubblePath != null) {
+        if (screenLit && rig.showKeyline && shown != Kind.IDLE && bubble != null && bubblePath != null) {
             val extra = ((pill.width - rig.sensor.width) / 6.0).coerceIn(0.0, 1.0)
             keyline.alpha = (0.16 * extra * 255).toInt()
             if (keyline.alpha > 2) {
@@ -590,7 +599,7 @@ class IslandPillView(context: Context) : View(context) {
             }
             canvas.drawPath(shell, black)
         }
-        if (rig.showKeyline && shown != Kind.IDLE) {
+        if (screenLit && rig.showKeyline && shown != Kind.IDLE) {
             val extra = ((pill.width - rig.sensor.width) / 6.0).coerceIn(0.0, 1.0)
             keyline.alpha = (0.16 * extra * (if (shown == Kind.EXPANDED) 0.93 else 1.0) * 255).toInt()
             if (keyline.alpha > 2) {
