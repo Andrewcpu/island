@@ -1186,7 +1186,13 @@ class IslandPillView(context: Context) : View(context) {
         val width: Int
         val leftExtent = rig.centerX - cover.left
         val rightExtent = cover.right - rig.centerX
-        if (abs(rightExtent - leftExtent) > 1.0) {
+        // A longer left ear (lock, torch, missed call) used to publish an exact
+        // rect whose x had to slide left of the camera. On the hugged capsule that
+        // slide leaves the window's left edge on the camera, so the left ear is
+        // cut flat and only the right semicircle remains. Center on the camera and
+        // cover the longer ear on both sides. The drawn pill stays the tight one.
+        val symmetric = abs(rightExtent - leftExtent) <= 1.0 || leftExtent > rightExtent + 1.0
+        if (!symmetric) {
             left = floor(cover.left * density).toInt()
             val right = ceil(cover.right * density).toInt()
             width = (right - left).coerceAtLeast(1)
@@ -1197,7 +1203,7 @@ class IslandPillView(context: Context) : View(context) {
             width = halfW * 2
         }
         cameraPx = Math.round(rig.centerX * density).toInt()
-        windowCentered = abs(rightExtent - leftExtent) <= 1.0
+        windowCentered = symmetric
         originX = left
         originY = top
         if (left == appliedL && top == appliedT && width == appliedW && height == appliedH) return

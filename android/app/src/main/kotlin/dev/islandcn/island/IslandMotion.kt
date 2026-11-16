@@ -979,6 +979,18 @@ internal fun continuousRect(rect: DRect, radius: Double, smoothing: Double): Pat
         path.addRect(rect.left.toFloat(), rect.top.toFloat(), rect.right.toFloat(), rect.bottom.toFloat(), Path.Direction.CW)
         return path
     }
+    // A collapsed island is a capsule: semicircle on both ears. The squircle inset
+    // meets in the middle once the hug makes the body barely wider than it is tall,
+    // and that shared edge is what reads as a flat end. Expanded cards stay below.
+    if (r >= min(w, h) / 2.0 - 0.05) {
+        path.addRoundRect(
+            RectF(rect.left.toFloat(), rect.top.toFloat(), rect.right.toFloat(), rect.bottom.toFloat()),
+            r.toFloat(),
+            r.toFloat(),
+            Path.Direction.CW,
+        )
+        return path
+    }
     val across = ease(r, smoothing, w / 2)
     val down = ease(r, smoothing, h / 2)
     val x = rect.left
