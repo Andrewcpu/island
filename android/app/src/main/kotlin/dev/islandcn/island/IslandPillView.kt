@@ -534,10 +534,71 @@ class IslandPillView(context: Context) : View(context) {
         return super.dispatchTouchEvent(event)
     }
 
+    fun onLocked(locked: Boolean) {
+        if (locked) {
+            if (faces["lock"] != null) return
+            present(face("lock", "lock", "", "", "Locked", "", "", Color.WHITE, -1f, 90.0, 200))
+            return
+        }
+        if (faces.remove("lock") == null) return
+        rig.end("lock")
+        kick()
+    }
+
+    fun onTorch(level: Float, on: Boolean) {
+        if (torchDrag) return
+        if (!on) {
+            if (faces.remove("torch") == null) return
+            rig.end("torch")
+            kick()
+            return
+        }
+        val existing = faces["torch"]
+        if (existing != null) {
+            existing.progress = level
+            kick()
+            return
+        }
+        present(face("torch", "torch", "", "", "Flashlight", "", "", 0xFFFFD60A.toInt(), level, 80.0, 36))
+    }
+
+    private var torchDrag = false
+
+    private fun dragTorch(x: Double) {
+        val track = hits.slider
+        if (track.width < 1.0) return
+        val fraction = ((x - track.left) / track.width).toFloat().coerceIn(0f, 1f)
+        faces["torch"]?.progress = fraction
+        IslandMonitors.setTorchFraction(fraction)
+        kick()
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val origin = placeOrigin()
         val x = (event.x + origin[0]) / density.toDouble()
         val y = (event.y + origin[1]) / density.toDouble()
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                if (rig.look() == Kind.EXPANDED && rig.shownId() == "torch" && hit(hits.slider, x, y)) {
+                    torchDrag = true
+                    dragTorch(x)
+                    return true
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (torchDrag) {
+                    dragTorch(x)
+                    return true
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (torchDrag) {
+                    torchDrag = false
+                    if (event.actionMasked == MotionEvent.ACTION_UP) dragTorch(x)
+                    return true
+                }
+            }
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 val bubble = rig.bubble
@@ -1033,7 +1094,12 @@ class IslandPillView(context: Context) : View(context) {
         val preset = when (face.id) {
             "timer", "timer-done" -> 22.0 to 48.0
             "now-playing" -> 22.0 to 24.0
-            "call" -> if (face.value == "Ring" || face.value == "Missed") 22.0 to 22.0 else 66.0 to 66.0
+            "call" -> when (face.value) {
+                "Missed" -> 22.0 to 0.0
+                "Ring" -> 22.0 to 22.0
+                else -> 66.0 to 66.0
+            }
+            "lock", "torch" -> 22.0 to 0.0
             "battery" -> 72.0 to 72.0
             "eta" -> 22.0 to 56.0
             "recording" -> if (face.title == "Voice memo") 36.0 to 48.0 else 22.0 to 48.0
@@ -1053,8 +1119,9 @@ class IslandPillView(context: Context) : View(context) {
         }
         val caption = IslandModes.compactCaption(face.title, face.detail, face.value, face.trail)
         // An icon takes the leading ear and the short label sits in the trailing one. Glyph-only
-        // ears keep their preset box so a missed-call mark does not swell into the label's width.
-        val captionInTrail = face.icon != null && face.id != "live" && face.id != "now-playing" && face.id != "battery" && face.id != "upload" && face.id != "transfer"
+        // ears keep their preset box. A missed call, the lock, and the torch are an icon alone.
+        val iconOnly = face.id == "lock" || face.id == "torch" || (face.id == "call" && face.value == "Missed")
+        val captionInTrail = !iconOnly && face.icon != null && face.id != "live" && face.id != "now-playing" && face.id != "battery" && face.id != "upload" && face.id != "transfer"
         val trailW = if (captionInTrail && caption.isNotEmpty()) max(preset.second, IslandModes.compactTextWidth(caption)) else preset.second
         val chargeText = if (face.id == "battery") IslandModes.percentWidth(face.value) else 0.0
         return Spec(face.id, face.priority, 0, face.group, preset.first, trailW, face.minimal, face.body, chargeText)
@@ -1205,7 +1272,10 @@ class IslandPillView(context: Context) : View(context) {
         drawInside(canvas, continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72), draw)
     }
 
-    private fun ticking(): Boolean = faces.keys.any { it == "timer" || it == "timer-done" || it == "recording" || it == "call" || it == "upload" || it == "transfer" || it == "now-playing" || it == "live" }
+    private fun ticking(): Boolean {
+        if (faces.keys.any { it == "timer" || it == "timer-done" || it == "recording" || it == "call" || it == "upload" || it == "transfer" || it == "now-playing" || it == "live" }) return true
+        return faces.containsKey("lock") && rig.look() == Kind.EXPANDED
+    }
 
     private fun kick() {
         if (posted) return

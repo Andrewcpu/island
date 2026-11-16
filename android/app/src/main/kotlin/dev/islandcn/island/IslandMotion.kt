@@ -348,9 +348,14 @@ internal class IslandRig {
             }
             box
         }
-        val pad = 4.0
-        var width = max(94.85, bounds.width + pad * 2)
         val height = 36.84
+        val diameter = min(bounds.width, bounds.height).coerceAtLeast(1.0)
+        // Eight points past the lens on each side. A 95pt floor is the iPhone sensor
+        // housing, and on a punch-hole it leaves a wide empty margin around the camera.
+        val hug = 8.0
+        var width = max(height, diameter + hug * 2.0)
+        if (bounds.width <= bounds.height * 1.35) width = max(width, bounds.width + 4.0)
+        val pad = 4.0
         var top = bounds.centerY - height / 2
         if (bounds.height + pad * 2 <= height) {
             if (top > bounds.top - pad) top = bounds.top - pad
@@ -358,11 +363,7 @@ internal class IslandRig {
         }
         top = max(0.0, top)
         val cx = bounds.centerX
-        if (cx - width / 2 > bounds.left - pad || cx + width / 2 < bounds.right + pad) {
-            width = max(width, bounds.width + pad * 2)
-        }
         // Same center as the cutout box, so the island stays on the camera. The mask is only the lens.
-        val diameter = min(bounds.width, bounds.height).coerceAtLeast(1.0)
         hole = DRect(cx - diameter / 2, bounds.centerY - diameter / 2, cx + diameter / 2, bounds.centerY + diameter / 2)
         sensor = DRect(cx - width / 2, top, cx + width / 2, top + height)
         centerX = cx

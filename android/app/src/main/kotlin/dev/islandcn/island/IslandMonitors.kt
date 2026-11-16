@@ -1,10 +1,14 @@
 package dev.islandcn.island
 
 import android.Manifest
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.camera2.CameraAccessException
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.hardware.display.DisplayManager
 import android.view.Display
 import android.content.pm.PackageManager
@@ -19,6 +23,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.util.Log
+import kotlin.math.roundToInt
 import android.provider.CalendarContract
 import android.telecom.TelecomManager
 import android.telephony.PhoneStateListener
@@ -31,6 +37,16 @@ object IslandMonitors {
     private var phoneWatching = false
     private var batteryWatching = false
     private var screenWatching = false
+    private var keyguardWatching = false
+    private var torchWatching = false
+    private var keyguard: KeyguardManager? = null
+    private var keyguardLocked: Boolean? = null
+    private var camera: CameraManager? = null
+    private var torchId: String? = null
+    private var torchMax = 1
+    private var torchHardwareOn = false
+    private var torchStep = -1
+    private val mainHandler = Handler(Looper.getMainLooper())
     /** Fully on. Doze, off, and AOD are not. */
     private var awake = false
     private var dreaming = false
@@ -150,10 +166,12 @@ object IslandMonitors {
                     Intent.ACTION_SCREEN_OFF -> {
                         awake = false
                         IslandOverlayService.syncChrome()
+                        refreshLock()
                     }
                     Intent.ACTION_SCREEN_ON -> {
                         awake = true
                         IslandOverlayService.syncChrome()
+                        refreshLock()
                     }
                     Intent.ACTION_DREAMING_STARTED -> {
                         dreaming = true
@@ -220,6 +238,125 @@ object IslandMonitors {
 
     private fun isDark(state: Int): Boolean =
         state == Display.STATE_OFF || state == Display.STATE_DOZE || state == Display.STATE_DOZE_SUSPEND
+
+    /** Lock screen is its own activity. Unlock removes it. This does not peek. */
+    fun watchKeyguard(context: Context) {
+        if (keyguardWatching) return
+        keyguardWatching = true
+        val app = context.applicationContext
+        keyguard = app.getSystemService(KeyguardManager::class.java)
+        refreshLock()
+        mainHandler.postDelayed({ refreshLock() }, 400)
+        if (Build.VERSION.SDK_INT >= 33) {
+            keyguard?.addKeyguardLockedStateListener(app.mainExecutor) { _ -> refreshLock() }
+        }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_USER_PRESENT)
+            addAction(Intent.ACTION_USER_UNLOCKED)
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                refreshLock()
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            app.registerReceiver(receiver, filter)
+        }
+    }
+
+    fun refreshLock() {
+        val locked = keyguard?.isKeyguardLocked == true
+        if (keyguardLocked == locked) return
+        keyguardLocked = locked
+        IslandOverlayService.onKeyguard(locked)
+    }
+
+    /**
+     * Torch on is an activity until it turns off. Strength uses the camera API when
+     * the hardware reports more than one level; otherwise the slider is on or off.
+     */
+    fun watchTorch(context: Context) {
+        if (torchWatching) return
+        torchWatching = true
+        val manager = context.applicationContext.getSystemService(CameraManager::class.java) ?: return
+        camera = manager
+        val id = try {
+            manager.cameraIdList.firstOrNull { candidate ->
+                val chars = manager.getCameraCharacteristics(candidate)
+                chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+            }
+        } catch (_: Exception) {
+            null
+        } ?: return
+        torchId = id
+        torchMax = torchMaximum(manager, id)
+        manager.registerTorchCallback(object : CameraManager.TorchCallback() {
+            override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
+                if (cameraId != torchId) return
+                torchHardwareOn = enabled
+                if (!enabled) {
+                    IslandOverlayService.onTorch(0f, false)
+                    return
+                }
+                val fraction = if (torchMax <= 1) 1f else {
+                    val strength = try {
+                        manager.getTorchStrengthLevel(cameraId)
+                    } catch (_: CameraAccessException) {
+                        torchMax
+                    }
+                    strength.toFloat() / torchMax.toFloat()
+                }
+                IslandOverlayService.onTorch(fraction.coerceIn(0f, 1f), true)
+            }
+
+            override fun onTorchStrengthLevelChanged(cameraId: String, newStrengthLevel: Int) {
+                if (cameraId != torchId || torchMax <= 1) return
+                torchHardwareOn = true
+                IslandOverlayService.onTorch((newStrengthLevel.toFloat() / torchMax.toFloat()).coerceIn(0f, 1f), true)
+            }
+        }, mainHandler)
+    }
+
+    fun setTorchFraction(fraction: Float) {
+        val manager = camera ?: return
+        val id = torchId ?: return
+        val level = fraction.coerceIn(0f, 1f)
+        try {
+            if (level < 0.04f) {
+                if (torchHardwareOn) manager.setTorchMode(id, false)
+                torchHardwareOn = false
+                torchStep = 0
+                IslandOverlayService.onTorch(0f, false)
+                return
+            }
+            if (torchMax <= 1) {
+                if (torchHardwareOn) return
+                manager.setTorchMode(id, true)
+                torchHardwareOn = true
+                return
+            }
+            val step = (level * torchMax).roundToInt().coerceIn(1, torchMax)
+            if (step == torchStep && torchHardwareOn) return
+            if (Build.VERSION.SDK_INT >= 33) manager.turnOnTorchWithStrengthLevel(id, step)
+            else manager.setTorchMode(id, true)
+            torchHardwareOn = true
+            torchStep = step
+        } catch (error: Exception) {
+            Log.w("IslandOverlay", "Torch level failed", error)
+        }
+    }
+
+    private fun torchMaximum(manager: CameraManager, id: String): Int {
+        if (Build.VERSION.SDK_INT < 33) return 1
+        return try {
+            val reported = manager.getCameraCharacteristics(id).get(CameraCharacteristics.FLASH_INFO_STRENGTH_MAXIMUM_LEVEL) ?: 1
+            reported.coerceAtLeast(1)
+        } catch (_: CameraAccessException) {
+            1
+        }
+    }
 
     /** DreamManager.isDreaming() is hidden. A miss just waits for the broadcasts. */
     private fun dreamRunning(app: Context): Boolean {

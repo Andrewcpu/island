@@ -30,6 +30,7 @@ internal object IslandModes {
         var previous = DRect(0.0, 0.0, 0.0, 0.0)
         var next = DRect(0.0, 0.0, 0.0, 0.0)
         var like = DRect(0.0, 0.0, 0.0, 0.0)
+        var slider = DRect(0.0, 0.0, 0.0, 0.0)
 
         fun clear() {
             decline = DRect(0.0, 0.0, 0.0, 0.0)
@@ -41,6 +42,7 @@ internal object IslandModes {
             previous = decline
             next = decline
             like = decline
+            slider = decline
         }
     }
 
@@ -145,6 +147,8 @@ internal object IslandModes {
             "eta" -> 146.0
             "message" -> 76.0 + (body - 48.0).coerceAtLeast(0.0)
             "timer", "timer-done" -> 80.0
+            "lock" -> 108.0
+            "torch" -> 100.0
             else -> 70.0
         }
         return (end + pad).coerceIn(84.0, 180.0)
@@ -152,6 +156,10 @@ internal object IslandModes {
 
     fun drawBubble(canvas: Canvas, id: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int, art: Bitmap? = null, mark: String = "", playing: Boolean = false, icon: Bitmap? = null, charge: String = "", charging: Boolean = false) {
         val lead = DRect(bubble.left + 6.42, bubble.centerY - 11, bubble.left + 28.42, bubble.centerY + 11)
+        if (id == "call" && mark == "missed") {
+            glyph(canvas, "missed", lead, 0xFFFF3B30.toInt(), alpha)
+            return
+        }
         if (icon != null) {
             cover(canvas, icon, lead, 6f, alpha)
             return
@@ -165,7 +173,9 @@ internal object IslandModes {
             "upload", "transfer" -> ring(canvas, DRect(bubble.centerX - 10, bubble.centerY - 10, bubble.centerX + 10, bubble.centerY + 10), progress, accent, 0x29FFFFFF, 2.6f, alpha)
             "recording" -> meter(canvas, DRect(bubble.centerX - 11, bubble.centerY - 8, bubble.centerX + 11, bubble.centerY + 8), accent, 5, 2f, 2f, now, alpha, playing = true)
             "battery" -> batteryGlyph(canvas, bubble, charge, charging, accent, alpha)
-            else -> glyph(canvas, if (id == "call" && mark == "missed") "missed" else bubbleGlyph(id, accent), lead, if (mark == "missed") Color.WHITE else accent, alpha)
+            "lock" -> glyph(canvas, "lock", lead, Color.WHITE, alpha)
+            "torch" -> flashlightIcon(canvas, lead, progress, alpha)
+            else -> glyph(canvas, bubbleGlyph(id, accent), lead, accent, alpha)
         }
     }
 
@@ -188,6 +198,10 @@ internal object IslandModes {
     ) {
         val lead = leading ?: return
         val trailRect = trailing
+        if (id == "call" && valueText == "Missed") {
+            glyph(canvas, "missed", lead, 0xFFFF3B30.toInt(), alpha)
+            return
+        }
         if (icon != null) {
             cover(canvas, icon, lead, 6f, alpha)
             val caption = if (id == "upload" || id == "transfer" || id == "live" || id == "now-playing") "" else compactCaption(titleText, detail, valueText, trail)
@@ -204,11 +218,10 @@ internal object IslandModes {
                 cover(canvas, art, lead, 6f, alpha)
                 if (trailRect != null) meter(canvas, trailRect, accent, 6, 2.4f, 1.9f, musicClock(now, playing), alpha, true)
             }
+            "lock" -> glyph(canvas, "lock", lead, Color.WHITE, alpha)
+            "torch" -> flashlightIcon(canvas, lead, progress, alpha)
             "call" -> {
-                if (valueText == "Missed") {
-                    avatar(canvas, titleText, lead, alpha)
-                    glyph(canvas, "missed", trailRect, Color.WHITE, alpha)
-                } else if (valueText == "Ring") {
+                if (valueText == "Ring") {
                     avatar(canvas, titleText, lead, alpha)
                     glyph(canvas, "phone", trailRect, 0xFF31D259.toInt(), alpha)
                 } else {
@@ -293,6 +306,8 @@ internal object IslandModes {
             "live" -> liveExpanded(canvas, pill, hole, titleText, detail, alpha, icon)
             "calendar" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, alpha, icon)
             "order-a", "order-b" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, alpha, icon)
+            "lock" -> faceIdMark(canvas, pill, hole, now, alpha)
+            "torch" -> torchExpanded(canvas, pill, hole, progress, hits, alpha)
             else -> personExpanded(canvas, pill, titleText, detail, alpha, icon)
         }
     }
@@ -807,11 +822,11 @@ internal object IslandModes {
     fun percentWidth(percent: String): Double = compact.measureText(percent).toDouble()
 
     /**
-     * Solo charging pill. The camera capsule (about 95×37) is the floor. It grows, evenly, only
+     * Solo charging pill. The floor is the camera capsule. It grows, evenly, only
      * when the percentage no longer fits in the ear beside the lens.
      */
     fun chargingPillWidth(textW: Double, sensorW: Double, holeW: Double): Double {
-        val sensor = sensorW.coerceAtLeast(94.85)
+        val sensor = sensorW.coerceAtLeast(1.0)
         val lens = if (holeW >= 1.0) holeW else 28.0
         val lensHalf = lens / 2.0
         val ear = sensor / 2.0 - lensHalf - chargeClear - chargeEdge
@@ -1009,6 +1024,92 @@ internal object IslandModes {
         canvas.restore()
     }
 
+    /**
+     * Expanded lock. An iOS-style Face ID mark: corner brackets, a face, and a
+     * line that keeps scanning. It is not wired to the phone's face unlock.
+     */
+    private fun faceIdMark(canvas: Canvas, pill: DRect, hole: DRect, now: Double, alpha: Int) {
+        val s = 26f
+        val cx = pill.centerX.toFloat()
+        val cy = max(pill.centerY, hole.bottom + s * 1.45f + 10.0).toFloat()
+        stroke.color = Color.WHITE
+        stroke.alpha = alpha
+        stroke.strokeWidth = 2.2f
+        stroke.strokeCap = Paint.Cap.ROUND
+        val reach = s * 1.45f
+        val arm = s * 0.42f
+        fun corner(sx: Float, sy: Float) {
+            val x = cx + sx * reach
+            val y = cy + sy * reach
+            canvas.drawLine(x, y, x - sx * arm, y, stroke)
+            canvas.drawLine(x, y, x, y - sy * arm, stroke)
+        }
+        corner(-1f, -1f)
+        corner(1f, -1f)
+        corner(-1f, 1f)
+        corner(1f, 1f)
+        canvas.drawCircle(cx, cy - s * 0.05f, s * 0.52f, stroke)
+        fill.color = Color.WHITE
+        fill.alpha = alpha
+        canvas.drawCircle(cx - s * 0.18f, cy - s * 0.16f, 1.7f, fill)
+        canvas.drawCircle(cx + s * 0.18f, cy - s * 0.16f, 1.7f, fill)
+        canvas.drawArc(RectF(cx - s * 0.24f, cy - s * 0.02f, cx + s * 0.24f, cy + s * 0.32f), 15f, 150f, false, stroke)
+        val phase = ((now * 0.55) % 1.0).toFloat()
+        val scan = cy - s * 0.72f + phase * s * 1.35f
+        stroke.strokeWidth = 2.4f
+        stroke.alpha = (alpha * 0.95f).toInt()
+        canvas.drawLine(cx - s * 0.95f, scan, cx + s * 0.95f, scan, stroke)
+    }
+
+    /** Flashlight whose beam grows with [level], the way the iOS island icon does. */
+    private fun flashlightIcon(canvas: Canvas, rect: DRect, level: Float, alpha: Int) {
+        val t = level.coerceIn(0f, 1f)
+        val cx = rect.centerX.toFloat()
+        val cy = rect.centerY.toFloat()
+        val body = min(rect.width, rect.height).toFloat().coerceAtLeast(8f) * 0.34f
+        val beam = body * (0.35f + 1.15f * t)
+        fill.color = 0xFFFFD60A.toInt()
+        fill.alpha = (alpha * (0.18f + 0.82f * t)).toInt()
+        val beamPath = android.graphics.Path()
+        val lamp = cy - body * 0.55f
+        beamPath.moveTo(cx - body * 0.42f, lamp)
+        beamPath.lineTo(cx + body * 0.42f, lamp)
+        beamPath.lineTo(cx + body * (0.7f + 0.85f * t), lamp - beam)
+        beamPath.lineTo(cx - body * (0.7f + 0.85f * t), lamp - beam)
+        beamPath.close()
+        canvas.drawPath(beamPath, fill)
+        fill.color = Color.WHITE
+        fill.alpha = alpha
+        canvas.drawRoundRect(RectF(cx - body * 0.55f, cy - body * 0.15f, cx + body * 0.55f, cy + body * 1.15f), body * 0.2f, body * 0.2f, fill)
+        fill.color = 0xFFFFD60A.toInt()
+        fill.alpha = (alpha * (0.4f + 0.6f * t)).toInt()
+        canvas.drawRoundRect(RectF(cx - body * 0.72f, lamp, cx + body * 0.72f, lamp + body * 0.42f), body * 0.12f, body * 0.12f, fill)
+    }
+
+    /** Expanded torch: the icon tracks the level, and the track is the brightness slider. */
+    private fun torchExpanded(canvas: Canvas, pill: DRect, hole: DRect, level: Float, hits: Hits, alpha: Int) {
+        val t = level.coerceIn(0f, 1f)
+        val row = max(pill.centerY, hole.bottom + 22.0)
+        val icon = DRect(pill.left + 22.0, row - 18.0, pill.left + 58.0, row + 18.0)
+        flashlightIcon(canvas, icon, t, alpha)
+        val track = DRect(icon.right + 16.0, row - 14.0, pill.right - 22.0, row + 14.0)
+        hits.slider = track.inflate(10.0)
+        fill.color = 0x33FFFFFF
+        fill.alpha = alpha
+        canvas.drawRoundRect(track.toRect(), 14f, 14f, fill)
+        val fillRight = track.left + track.width * t
+        if (fillRight - track.left > 1.0) {
+            fill.color = 0xFFFFD60A.toInt()
+            fill.alpha = alpha
+            canvas.drawRoundRect(RectF(track.left.toFloat(), track.top.toFloat(), fillRight.toFloat(), track.bottom.toFloat()), 14f, 14f, fill)
+        }
+        fill.color = Color.WHITE
+        fill.alpha = alpha
+        val knob = 11f
+        val kx = fillRight.toFloat().coerceIn((track.left + knob).toFloat(), (track.right - knob).toFloat())
+        canvas.drawCircle(kx, row.toFloat(), knob, fill)
+    }
+
     private fun glyph(canvas: Canvas, name: String, rect: DRect?, color: Int, alpha: Int) {
         if (rect == null) return
         val cx = rect.centerX.toFloat()
@@ -1028,6 +1129,11 @@ internal object IslandModes {
             "phone" -> {
                 canvas.drawRoundRect(RectF(cx - s * 0.55f, cy - s * 0.9f, cx + s * 0.15f, cy + s * 0.2f), s * 0.3f, s * 0.3f, stroke)
                 canvas.drawLine(cx - s * 0.1f, cy + s * 0.15f, cx + s * 0.7f, cy + s * 0.7f, stroke)
+            }
+            "lock" -> {
+                val body = RectF(cx - s * 0.72f, cy - s * 0.15f, cx + s * 0.72f, cy + s * 0.95f)
+                canvas.drawRoundRect(body, s * 0.22f, s * 0.22f, fill)
+                canvas.drawArc(RectF(cx - s * 0.48f, cy - s * 1.05f, cx + s * 0.48f, cy + s * 0.15f), 180f, 180f, false, stroke)
             }
             "missed" -> {
                 symbol(canvas, phoneMissed, rect, color, alpha)

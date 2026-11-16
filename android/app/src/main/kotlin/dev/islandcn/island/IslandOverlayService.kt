@@ -61,6 +61,8 @@ class IslandOverlayService : Service() {
         pill?.let { IslandOverlayService.applyLive(it) }
         IslandMonitors.watchPhone(this)
         IslandMonitors.watchBattery(this)
+        IslandMonitors.watchKeyguard(this)
+        IslandMonitors.watchTorch(this)
         IslandNotificationListener.instance?.resync()
         return START_STICKY
     }
@@ -291,6 +293,14 @@ class IslandOverlayService : Service() {
          */
         fun syncChrome() {
             instance?.pill?.setScreenLit(IslandMonitors.screenLit())
+        }
+
+        fun onKeyguard(locked: Boolean) {
+            instance?.pill?.onLocked(locked)
+        }
+
+        fun onTorch(level: Float, on: Boolean) {
+            instance?.pill?.onTorch(level, on)
         }
 
         fun start(context: Context) {
