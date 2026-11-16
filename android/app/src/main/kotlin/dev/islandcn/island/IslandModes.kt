@@ -6,11 +6,17 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import androidx.core.content.ContextCompat
+import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -59,6 +65,14 @@ internal object IslandModes {
     private val label14 = text(14f, 400, 0f)
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+    private val faceMask = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        color = Color.WHITE
+    }
+    private val faceGlow = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val faceIn = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
     private var phoneMissed: Drawable? = null
     private var chatBubble: Drawable? = null
 
@@ -1025,40 +1039,99 @@ internal object IslandModes {
     }
 
     /**
-     * Expanded lock. An iOS-style Face ID mark: corner brackets, a face, and a
-     * line that keeps scanning. It is not wired to the phone's face unlock.
+     * Expanded lock only. Geometry is measured from the reference glyph: an outer
+     * ring of four arcs centered on the sides, a full inner circle, vertical eyes,
+     * a J nose, and a shallow smile. Strokes mask one radial gradient that sweeps
+     * out from the center while the whole mark breathes.
      */
     private fun faceIdMark(canvas: Canvas, pill: DRect, hole: DRect, now: Double, alpha: Int) {
-        val s = 26f
+        if (alpha <= 0) return
+        val top = hole.bottom + 8.0
+        val bottom = pill.bottom - 12.0
+        val room = (bottom - top).coerceAtLeast(32.0)
         val cx = pill.centerX.toFloat()
-        val cy = max(pill.centerY, hole.bottom + s * 1.45f + 10.0).toFloat()
-        stroke.color = Color.WHITE
-        stroke.alpha = alpha
-        stroke.strokeWidth = 2.2f
-        stroke.strokeCap = Paint.Cap.ROUND
-        val reach = s * 1.45f
-        val arm = s * 0.42f
-        fun corner(sx: Float, sy: Float) {
-            val x = cx + sx * reach
-            val y = cy + sy * reach
-            canvas.drawLine(x, y, x - sx * arm, y, stroke)
-            canvas.drawLine(x, y, x, y - sy * arm, stroke)
+        val cy = ((top + bottom) / 2.0).toFloat()
+        // Inner-ring centerline is 1. Outer centerline 1.281, stroke 0.147.
+        val outerEdge = 1.281f + 0.147f / 2f
+        val radius = (room / (2.0 * outerEdge)).toFloat()
+        val strokeW = radius * 0.147f
+        val breath = (0.5 + 0.5 * sin(now * 2.0 * PI / 3.2)).toFloat()
+        val scale = 0.88f + 0.12f * breath
+        canvas.save()
+        canvas.translate(cx, cy)
+        canvas.scale(scale, scale)
+        canvas.translate(-cx, -cy)
+        val edge = radius * outerEdge + 2f
+        val layer = canvas.saveLayer(cx - edge, cy - edge, cx + edge, cy + edge, null)
+        faceMask.strokeWidth = strokeW
+        faceMask.alpha = 255
+        faceMask.xfermode = null
+        val outer = radius * 1.281f
+        val outerOval = RectF(cx - outer, cy - outer, cx + outer, cy + outer)
+        val arc = 70f
+        for (mid in floatArrayOf(0f, 90f, 180f, 270f)) {
+            canvas.drawArc(outerOval, mid - arc / 2f, arc, false, faceMask)
         }
-        corner(-1f, -1f)
-        corner(1f, -1f)
-        corner(-1f, 1f)
-        corner(1f, 1f)
-        canvas.drawCircle(cx, cy - s * 0.05f, s * 0.52f, stroke)
-        fill.color = Color.WHITE
-        fill.alpha = alpha
-        canvas.drawCircle(cx - s * 0.18f, cy - s * 0.16f, 1.7f, fill)
-        canvas.drawCircle(cx + s * 0.18f, cy - s * 0.16f, 1.7f, fill)
-        canvas.drawArc(RectF(cx - s * 0.24f, cy - s * 0.02f, cx + s * 0.24f, cy + s * 0.32f), 15f, 150f, false, stroke)
-        val phase = ((now * 0.55) % 1.0).toFloat()
-        val scan = cy - s * 0.72f + phase * s * 1.35f
-        stroke.strokeWidth = 2.4f
-        stroke.alpha = (alpha * 0.95f).toInt()
-        canvas.drawLine(cx - s * 0.95f, scan, cx + s * 0.95f, scan, stroke)
+        canvas.drawCircle(cx, cy, radius, faceMask)
+        val eyeDx = radius * 0.413f
+        val eyeDy = radius * -0.244f
+        val eyeHalf = radius * 0.100f
+        canvas.drawLine(cx - eyeDx, cy + eyeDy - eyeHalf, cx - eyeDx, cy + eyeDy + eyeHalf, faceMask)
+        canvas.drawLine(cx + eyeDx, cy + eyeDy - eyeHalf, cx + eyeDx, cy + eyeDy + eyeHalf, faceMask)
+        val stemTop = cy + radius * -0.344f
+        val hook = radius * 0.122f
+        val nose = Path()
+        nose.moveTo(cx, stemTop)
+        nose.lineTo(cx, cy)
+        nose.arcTo(RectF(cx - hook * 2f, cy - hook, cx, cy + hook), 0f, 90f, false)
+        canvas.drawPath(nose, faceMask)
+        val smileR = radius * 0.431f
+        val smileCy = cy + radius * 0.039f
+        canvas.drawArc(RectF(cx - smileR, smileCy - smileR, cx + smileR, smileCy + smileR), 45f, 90f, false, faceMask)
+        faceGlow.shader = faceSweep(cx, cy, radius * outerEdge, now)
+        faceGlow.xfermode = faceIn
+        faceGlow.alpha = alpha
+        canvas.drawRect(cx - edge, cy - edge, cx + edge, cy + edge, faceGlow)
+        faceGlow.xfermode = null
+        faceGlow.alpha = 255
+        canvas.restoreToCount(layer)
+        canvas.restore()
+    }
+
+    /** Vibrant cyan expanding from the center, dim blue ahead of it and behind it. */
+    private fun faceSweep(cx: Float, cy: Float, outer: Float, now: Double): RadialGradient {
+        val reach = outer.coerceAtLeast(1f)
+        val peak = ((now / 2.4) % 1.0).toFloat() * reach
+        val band = reach * 0.36f
+        val vibrant = Color.rgb(105, 223, 251)
+        val dim = Color.rgb(46, 104, 156)
+        val count = 28
+        val colors = IntArray(count)
+        val stops = FloatArray(count)
+        for (i in 0 until count) {
+            val t = i / (count - 1f)
+            val rad = t * reach
+            val glow = max(faceGlowAt(rad - peak, band), max(faceGlowAt(rad - peak + reach, band), faceGlowAt(rad - peak - reach, band)))
+            colors[i] = mixColor(dim, vibrant, glow)
+            stops[i] = t
+        }
+        return RadialGradient(cx, cy, reach, colors, stops, Shader.TileMode.CLAMP)
+    }
+
+    private fun faceGlowAt(distance: Float, band: Float): Float {
+        val d = abs(distance) / band
+        if (d >= 1f) return 0f
+        val u = 1f - d
+        return u * u * (3f - 2f * u)
+    }
+
+    private fun mixColor(from: Int, to: Int, amount: Float): Int {
+        val u = amount.coerceIn(0f, 1f)
+        return Color.rgb(
+            (Color.red(from) + (Color.red(to) - Color.red(from)) * u).toInt(),
+            (Color.green(from) + (Color.green(to) - Color.green(from)) * u).toInt(),
+            (Color.blue(from) + (Color.blue(to) - Color.blue(from)) * u).toInt(),
+        )
     }
 
     /** Flashlight whose beam grows with [level], the way the iOS island icon does. */
