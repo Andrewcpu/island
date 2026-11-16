@@ -1045,8 +1045,8 @@ internal object IslandModes {
     }
 
     /**
-     * The same padlock as the compact lock. [open] 0 is the closed shackle; 1 swings
-     * it up around the left shoulder.
+     * Closed at 0, open at 1. The left post's end stays buried in the body and is the
+     * hinge: the shackle slides up a little, then swings to the left around that point.
      */
     private fun padlockIn(canvas: Canvas, rect: DRect, open: Float, alpha: Int) {
         val s = min(rect.width, rect.height).toFloat() * 0.34f
@@ -1060,14 +1060,32 @@ internal object IslandModes {
         stroke.alpha = alpha
         stroke.strokeWidth = (s * 0.16f).coerceAtLeast(1.4f)
         stroke.strokeCap = Paint.Cap.ROUND
-        canvas.drawRoundRect(RectF(cx - s * 0.72f, cy - s * 0.15f, cx + s * 0.72f, cy + s * 0.95f), s * 0.22f, s * 0.22f, fill)
+        stroke.strokeJoin = Paint.Join.ROUND
         val amount = open.coerceIn(0f, 1f)
+        val pop = smoothStep((amount / 0.32f).coerceIn(0f, 1f))
+        val spin = smoothStep(((amount - 0.32f) / 0.68f).coerceIn(0f, 1f))
+        val lift = s * 0.24f * pop
+        val px = cx - s * 0.46f
+        val py = cy + s * 0.16f
+        val shoulder = -s * 0.64f - lift
+        val radius = s * 0.46f
+        val foot = -s * 0.18f - lift
+        val shackle = Path()
+        shackle.moveTo(0f, 0f)
+        shackle.lineTo(0f, shoulder)
+        shackle.arcTo(RectF(0f, shoulder - radius, radius * 2f, shoulder + radius), 180f, 180f, false)
+        shackle.lineTo(radius * 2f, foot)
         canvas.save()
-        if (amount > 0f) {
-            canvas.rotate(-48f * amount, cx - s * 0.48f, cy - s * 0.45f)
-        }
-        canvas.drawArc(RectF(cx - s * 0.48f, cy - s * 1.05f, cx + s * 0.48f, cy + s * 0.15f), 180f, 180f, false, stroke)
+        canvas.translate(px, py)
+        canvas.rotate(-78f * spin)
+        canvas.drawPath(shackle, stroke)
         canvas.restore()
+        canvas.drawRoundRect(RectF(cx - s * 0.72f, cy - s * 0.15f, cx + s * 0.72f, cy + s * 0.95f), s * 0.22f, s * 0.22f, fill)
+    }
+
+    private fun smoothStep(amount: Float): Float {
+        val u = amount.coerceIn(0f, 1f)
+        return u * u * (3f - 2f * u)
     }
 
     /** Expanded stand-in for Face ID once the device is unlocked but the lock screen is still up. */

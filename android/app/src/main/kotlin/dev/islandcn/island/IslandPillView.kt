@@ -123,6 +123,7 @@ class IslandPillView(context: Context) : View(context) {
         isFocusable = false
         isFocusableInTouchMode = false
         rig.onPressed = { id -> onTap(id) }
+        rig.canExpand = { id -> id != "lock" || !lockAuthenticated }
         IslandModes.install(context)
     }
 
@@ -669,6 +670,11 @@ class IslandPillView(context: Context) : View(context) {
                         rig.collapse()
                         kick()
                     }
+                    return true
+                }
+                val activity = if (onBubble) rig.secondary?.id else rig.primary?.id
+                // The settled unlock pill has no expanded state. Another activity still opens.
+                if (!rig.expanded && activity == "lock" && !rig.canExpand("lock")) {
                     return true
                 }
                 rig.pointerDown(if (onBubble) "bubble" else "pill")

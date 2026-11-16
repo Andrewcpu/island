@@ -189,6 +189,8 @@ internal data class DRect(val left: Double, val top: Double, val right: Double, 
 
 internal class IslandRig {
     var onPressed: ((String) -> Unit)? = null
+    /** False for an activity that must stay compact, such as the settled unlock pill. */
+    var canExpand: (String) -> Boolean = { true }
     var kind = Kind.IDLE
         private set
     var showKeyline = true
@@ -444,7 +446,7 @@ internal class IslandRig {
      */
     fun beginWake(time: Double): Int? {
         if (time > now) now = time
-        val id = visible().firstOrNull()?.id ?: return null
+        val id = visible().firstOrNull { canExpand(it.id) }?.id ?: return null
         val gen = ++wakeGen
         expandedId = id
         alert = true
@@ -552,9 +554,9 @@ internal class IslandRig {
     fun measureLeading(id: String): Double = byId[id]?.leading ?: 0.0
 
     private fun expand(id: String?) {
-        wakeGen++
         val targetId = id ?: primary?.id ?: return
-        if (!byId.containsKey(targetId)) return
+        if (!byId.containsKey(targetId) || !canExpand(targetId)) return
+        wakeGen++
         val activity = byId[targetId] ?: return
         val group = activity.group
         if (group != null && groupShown[group] != targetId) groupShown[group] = targetId
