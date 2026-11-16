@@ -21,6 +21,7 @@ class IslandNotificationListener : NotificationListenerService() {
     private val missed = LinkedHashMap<String, String>()
     private val timers = LinkedHashMap<String, TimerNote>()
     private val progressNotes = LinkedHashMap<String, ProgressNote>()
+    private val lowBattery = LinkedHashMap<String, LowBatteryNote>()
     private val rides = LinkedHashMap<String, RideNote>()
     private val statuses = LinkedHashMap<String, Pair<String, String>>()
     private val calls = LinkedHashSet<String>()
@@ -100,6 +101,14 @@ class IslandNotificationListener : NotificationListenerService() {
         }
         releaseCall(key)
         if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
+        if (isLowBattery(sbn)) {
+            publishChanged(drop(key, keep = "low-battery"))
+            lowBattery[key] = lowBatteryNote(notification)
+            val intent = lowBatteryOpen(notification)
+            if (intent != null) opens[key] = intent else opens.remove(key)
+            publishLowBattery()
+            return
+        }
         val percent = percentProgress(notification)
         if (percent != null) {
             publishChanged(drop(key, keep = "progress"))
@@ -176,6 +185,7 @@ class IslandNotificationListener : NotificationListenerService() {
         if (keep != "timer" && timers.remove(key) != null) changed.add("timer")
         if (keep != "missed" && missed.remove(key) != null) changed.add("missed")
         if (keep != "progress" && progressNotes.remove(key) != null) changed.add("progress")
+        if (keep != "low-battery" && lowBattery.remove(key) != null) changed.add("low-battery")
         if (keep != "ride" && rides.remove(key) != null) changed.add("ride")
         if (keep != "status" && statuses.remove(key) != null) changed.add("status")
         if (changed.isNotEmpty()) icons.remove(key)
@@ -201,6 +211,7 @@ class IslandNotificationListener : NotificationListenerService() {
         if ("timer" in changed) publishTimer()
         if ("missed" in changed) publishMissed()
         if ("progress" in changed) publishProgress()
+        if ("low-battery" in changed) publishLowBattery()
         if ("ride" in changed) publishRide()
         if ("status" in changed) publishStatus()
     }
@@ -466,6 +477,57 @@ class IslandNotificationListener : NotificationListenerService() {
         return sender to body
     }
 
+    /**
+     * System UI low battery, before the generic percent rule. The warning's title
+     * contains a percent ("13% battery left") and would otherwise become an upload island.
+     */
+    private fun isLowBattery(sbn: StatusBarNotification): Boolean {
+        val notification = sbn.notification
+        val channel = notification.channelId.orEmpty()
+        val tag = sbn.tag.orEmpty()
+        val title = textExtra(notification, Notification.EXTRA_TITLE)
+        val text = textExtra(notification, Notification.EXTRA_TEXT)
+        val system = sbn.packageName == "com.android.systemui"
+        if (tag.contains("low_battery", ignoreCase = true)) return true
+        val bat = channel.equals("BAT", ignoreCase = true)
+        val titled = PERCENT.containsMatchIn(title) && title.contains("battery", ignoreCase = true)
+        val saver = text.contains("battery saver", ignoreCase = true)
+        if (system && (titled || (bat && (titled || saver || title.contains("battery", ignoreCase = true))))) return true
+        return bat && titled
+    }
+
+    private fun lowBatteryNote(notification: Notification): LowBatteryNote {
+        val title = textExtra(notification, Notification.EXTRA_TITLE)
+        val text = textExtra(notification, Notification.EXTRA_TEXT)
+        val sub = textExtra(notification, Notification.EXTRA_SUB_TEXT)
+        val percent = listOf(title, text, sub).firstNotNullOfOrNull { field ->
+            val match = PERCENT.find(field) ?: return@firstNotNullOfOrNull null
+            match.groupValues[1].toIntOrNull()?.takeIf { it in 0..100 }
+        } ?: -1
+        val message = text.ifEmpty { sub }.ifEmpty { "Battery is low" }
+        return LowBatteryNote(percent, message)
+    }
+
+    /** The Turn on action is the natural tap. The content intent is the fallback. */
+    private fun lowBatteryOpen(notification: Notification): PendingIntent? {
+        val turnOn = notification.actions?.firstOrNull { action ->
+            val label = action.title?.toString()?.trim().orEmpty()
+            label.equals("Turn on", ignoreCase = true) || label.contains("battery saver", ignoreCase = true)
+        }?.actionIntent
+        return turnOn ?: notification.contentIntent
+    }
+
+    private fun publishLowBattery() {
+        val note = lowBattery.entries.lastOrNull()
+        if (note == null) {
+            IslandLinks.clear("low-battery")
+            IslandOverlayService.onLowBatteryCleared()
+        } else {
+            IslandLinks.set("low-battery", opens[note.key])
+            IslandOverlayService.onLowBattery(this, note.value.percent, note.value.message)
+        }
+    }
+
     /** A percent in the title, text, or subtext, from any app: "72%" or "Charge: 72%". */
     private fun percentProgress(notification: Notification): ProgressNote? {
         val fields = listOf(
@@ -537,6 +599,7 @@ class IslandNotificationListener : NotificationListenerService() {
 
     private data class TimerNote(val endsAt: Long, val frozen: Long?, val paused: Boolean, val label: String)
     private data class ProgressNote(val title: String, val detail: String, val fraction: Float, val label: String)
+    private data class LowBatteryNote(val percent: Int, val message: String)
     private data class RideNote(val title: String, val detail: String, val value: String, val delivery: Boolean)
 
     companion object {

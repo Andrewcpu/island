@@ -275,6 +275,7 @@ class IslandOverlayService : Service() {
         private var latestRide: RideSnap? = null
         private var latestStatus: Pair<String, String>? = null
         private var latestBattery: Pair<Int, Boolean>? = null
+        private var latestLowBattery: Pair<Int, String>? = null
         private var latestCallIcon: android.graphics.Bitmap? = null
         private var latestMissedIcon: android.graphics.Bitmap? = null
         private var latestMessageIcon: android.graphics.Bitmap? = null
@@ -403,6 +404,16 @@ class IslandOverlayService : Service() {
 
         fun batteryLive(): Boolean = latestBattery != null
 
+        fun onLowBattery(context: Context, percent: Int, message: String) {
+            latestLowBattery = percent to message
+            deliver(context) { it.onLiveLowBattery(percent, message) }
+        }
+
+        fun onLowBatteryCleared() {
+            latestLowBattery = null
+            instance?.pill?.onLiveLowBatteryCleared()
+        }
+
         fun onBattery(context: Context, percent: Int, charging: Boolean) {
             latestBattery = percent to charging
             deliver(context) { it.onLiveBattery(percent, charging) }
@@ -444,6 +455,7 @@ class IslandOverlayService : Service() {
             latestRide?.let { view.onLiveRide(it.title, it.detail, it.value, it.delivery, it.icon) }
             latestStatus?.let { view.onLiveStatus(it.first, it.second, latestStatusIcon) }
             latestBattery?.let { view.onLiveBattery(it.first, it.second) }
+            latestLowBattery?.let { view.onLiveLowBattery(it.first, it.second) }
         }
 
         fun dispatch(context: Context, name: String, args: Map<String, Any?>) {

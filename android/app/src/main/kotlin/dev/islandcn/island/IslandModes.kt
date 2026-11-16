@@ -119,8 +119,9 @@ internal object IslandModes {
             drawExpanded(canvas, id, titleText, detail, valueText, accent, progress, glyph, elapsed, remaining, pill, hole, now, hits, alpha, art, playing, icon, liked)
         } else if (id == "live") {
             liveCompact(canvas, pill, hole, icon, now, alpha)
-        } else if (id == "battery" && kind == Kind.COMPACT) {
-            batteryCompact(canvas, pill, hole, valueText, accent, titleText == "Charging" || titleText == "Charged", alpha)
+        } else if ((id == "battery" || id == "low-battery") && kind == Kind.COMPACT) {
+            val charging = id == "battery" && (titleText == "Charging" || titleText == "Charged")
+            batteryCompact(canvas, pill, hole, valueText, accent, charging, alpha)
         } else {
             drawCompact(canvas, id, titleText, detail, valueText, trail, accent, progress, leading, trailing, now, alpha, art, playing, icon)
         }
@@ -169,6 +170,7 @@ internal object IslandModes {
             "timer", "timer-done" -> 80.0
             "lock" -> 108.0
             "torch" -> 100.0
+            "low-battery" -> 86.0
             else -> 70.0
         }
         return (end + pad).coerceIn(84.0, 180.0)
@@ -193,6 +195,7 @@ internal object IslandModes {
             "upload", "transfer" -> ring(canvas, DRect(bubble.centerX - 10, bubble.centerY - 10, bubble.centerX + 10, bubble.centerY + 10), progress, accent, 0x29FFFFFF, 2.6f, alpha)
             "recording" -> meter(canvas, DRect(bubble.centerX - 11, bubble.centerY - 8, bubble.centerX + 11, bubble.centerY + 8), accent, 5, 2f, 2f, now, alpha, playing = true)
             "battery" -> batteryGlyph(canvas, bubble, charge, charging, accent, alpha)
+            "low-battery" -> batteryGlyph(canvas, bubble, charge, false, accent, alpha)
             "lock" -> if (progress >= 0f) padlockIn(canvas, lead, progress, alpha) else glyph(canvas, "lock", lead, Color.WHITE, alpha)
             "torch" -> flashlightIcon(canvas, lead, progress, alpha)
             else -> glyph(canvas, bubbleGlyph(id, accent), lead, accent, alpha)
@@ -253,6 +256,10 @@ internal object IslandModes {
             "battery" -> {
                 textIn(canvas, titleText, compact, Color.WHITE, lead, false, alpha)
                 if (trailRect != null) batteryRow(canvas, trailRect, valueText, accent, titleText == "Charging" || titleText == "Charged", alpha)
+            }
+            "low-battery" -> {
+                textIn(canvas, valueText, compact, accent, lead, false, alpha)
+                if (trailRect != null) batteryGlyph(canvas, trailRect, valueText, false, accent, alpha, inset = 1.0)
             }
             "eta" -> {
                 glyph(canvas, if (accent == 0xFFFFD60A.toInt()) "box" else "car", lead, accent, alpha)
@@ -319,6 +326,7 @@ internal object IslandModes {
             "now-playing" -> playerExpanded(canvas, pill, hole, titleText, detail, accent, playing, progress, elapsed, remaining, now, hits, alpha, art, liked)
             "call" -> callExpanded(canvas, pill, titleText, detail, valueText, hits, alpha, icon)
             "battery" -> batteryExpanded(canvas, pill, titleText, detail, valueText, accent, alpha)
+            "low-battery" -> lowBatteryExpanded(canvas, pill, valueText, detail, accent, alpha)
             "eta" -> etaExpanded(canvas, pill, titleText, detail, valueText, accent, alpha, icon)
             "recording" -> recordingExpanded(canvas, pill, titleText, valueText, accent, detail != "Paused", hits, now, alpha)
             "upload", "transfer" -> mediaExpanded(canvas, pill, id, glyph, titleText, detail, valueText, accent, progress, alpha, icon)
@@ -531,6 +539,25 @@ internal object IslandModes {
         compact.color = color
         canvas.drawText(percent, (pill.right - 18.5 - 35.5 - 5.7 - compact.measureText(percent)).toFloat(), (mid + 5).toFloat(), compact)
         batteryIcon(canvas, pill.right - 18.5 - 35.5, mid - 8.3, 35.5, percent, if (charging) 0xFF63FF39.toInt() else accent, charging, alpha)
+    }
+
+    /** Low battery: the charging glyph filled to the percent left, plus the saver message. */
+    private fun lowBatteryExpanded(canvas: Canvas, pill: DRect, percent: String, message: String, accent: Int, alpha: Int) {
+        val glyph = DRect(pill.left + 20.0, pill.top + 16.0, pill.left + 64.0, pill.top + 48.0)
+        batteryGlyph(canvas, glyph, percent, false, accent, alpha, inset = 0.0)
+        val textLeft = glyph.right + 12.0
+        title.color = accent
+        title.alpha = alpha
+        canvas.drawText(percent, textLeft.toFloat(), (pill.top + 40.0).toFloat(), title)
+        caption.color = 0x9EEBEBF5.toInt()
+        caption.alpha = alpha
+        val width = (pill.right - 20.0 - (pill.left + 20.0)).toFloat()
+        val lines = wrapLines(message.ifBlank { "Battery is low" }, caption, width, 2)
+        var y = pill.top + 66.0
+        for (line in lines) {
+            canvas.drawText(line, (pill.left + 20.0).toFloat(), y.toFloat(), caption)
+            y += 16.0
+        }
     }
 
     private fun etaExpanded(canvas: Canvas, pill: DRect, name: String, plate: String, minutes: String, accent: Int, alpha: Int, icon: Bitmap?) {
@@ -1045,8 +1072,8 @@ internal object IslandModes {
     }
 
     /**
-     * Closed at 0, open at 1. The left post's end stays buried in the body and is the
-     * hinge: the shackle slides up a little, then swings to the left around that point.
+     * Closed at 0, open at 1. The shackle is one rigid U. Its left end stays in the
+     * body and is the only pivot; the right leg rides that rotation onto the left.
      */
     private fun padlockIn(canvas: Canvas, rect: DRect, open: Float, alpha: Int) {
         val s = min(rect.width, rect.height).toFloat() * 0.34f
@@ -1061,15 +1088,12 @@ internal object IslandModes {
         stroke.strokeWidth = (s * 0.16f).coerceAtLeast(1.4f)
         stroke.strokeCap = Paint.Cap.ROUND
         stroke.strokeJoin = Paint.Join.ROUND
-        val amount = open.coerceIn(0f, 1f)
-        val pop = smoothStep((amount / 0.32f).coerceIn(0f, 1f))
-        val spin = smoothStep(((amount - 0.32f) / 0.68f).coerceIn(0f, 1f))
-        val lift = s * 0.24f * pop
+        val spin = smoothStep(open.coerceIn(0f, 1f))
         val px = cx - s * 0.46f
-        val py = cy + s * 0.16f
-        val shoulder = -s * 0.64f - lift
+        val py = cy + s * 0.18f
+        val shoulder = -s * 0.70f
         val radius = s * 0.46f
-        val foot = -s * 0.18f - lift
+        val foot = -s * 0.16f
         val shackle = Path()
         shackle.moveTo(0f, 0f)
         shackle.lineTo(0f, shoulder)
@@ -1077,7 +1101,7 @@ internal object IslandModes {
         shackle.lineTo(radius * 2f, foot)
         canvas.save()
         canvas.translate(px, py)
-        canvas.rotate(-78f * spin)
+        canvas.rotate(-130f * spin)
         canvas.drawPath(shackle, stroke)
         canvas.restore()
         canvas.drawRoundRect(RectF(cx - s * 0.72f, cy - s * 0.15f, cx + s * 0.72f, cy + s * 0.95f), s * 0.22f, s * 0.22f, fill)

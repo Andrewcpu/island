@@ -648,7 +648,7 @@ internal class IslandRig {
             }
             Kind.COMPACT -> {
                 val solo = visible().singleOrNull()
-                if (solo?.id == "battery") {
+                if (solo?.id == "battery" || solo?.id == "low-battery") {
                     val width = IslandModes.chargingPillWidth(solo.chargeText, sensorWidth, hole.width)
                     val half = width / 2.0
                     Shape(-half, half, topInset, compactHeight, compactHeight / 2, half - compactHeight, half, 0.0)

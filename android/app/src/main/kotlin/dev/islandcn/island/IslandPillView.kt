@@ -72,6 +72,7 @@ class IslandPillView(context: Context) : View(context) {
     private var liveRide = false
     private var liveStatus = false
     private var liveBattery = false
+    private var liveLowBattery = false
     private var callerLabel = ""
     private var timerSpan = 5 * 60 * 1000L
     private var timerEnds = 0L
@@ -1041,6 +1042,29 @@ class IslandPillView(context: Context) : View(context) {
         present(face("now-playing", "note", "", "", track.title, artist, state, IslandModes.coverAccent(track.title), fraction, 144.0, 40))
     }
 
+    fun onLiveLowBattery(percent: Int, message: String) {
+        liveLowBattery = true
+        val level = if (percent in 0..100) percent else {
+            val battery = IslandMonitors.battery(context)
+            val raw = (battery["level"] as? Number)?.toInt() ?: 0
+            val scale = (battery["scale"] as? Number)?.toInt()?.coerceAtLeast(1) ?: 100
+            (raw * 100 / scale).coerceIn(0, 100)
+        }
+        val text = message.trim().ifBlank { "Battery is low" }
+        val label = "$level%"
+        val existing = faces["low-battery"]
+        if (existing != null && existing.value == label && existing.detail == text) return
+        present(face("low-battery", "battery", label, "", "Battery", text, label, 0xFFFF453A.toInt(), level / 100f, 78.0, 32))
+    }
+
+    fun onLiveLowBatteryCleared() {
+        liveLowBattery = false
+        if (faces.remove("low-battery") != null) {
+            rig.end("low-battery")
+            kick()
+        }
+    }
+
     fun onLiveBattery(percent: Int, charging: Boolean) {
         liveBattery = true
         if (sample == "battery") sample = null
@@ -1124,6 +1148,7 @@ class IslandPillView(context: Context) : View(context) {
         "upload" -> liveProgress
         "delivery", "ride" -> liveRide
         "battery" -> liveBattery
+        "low-battery" -> liveLowBattery
         else -> false
     }
 
@@ -1137,6 +1162,7 @@ class IslandPillView(context: Context) : View(context) {
             if (liveRide) add("eta")
             if (liveStatus) add("live")
             if (liveBattery) add("battery")
+            if (liveLowBattery) add("low-battery")
         }
         if (sample?.startsWith("record") == true) releaseMic()
         sample = null
@@ -1166,7 +1192,7 @@ class IslandPillView(context: Context) : View(context) {
                 else -> 66.0 to 66.0
             }
             "lock", "torch" -> 22.0 to 0.0
-            "battery" -> 72.0 to 72.0
+            "battery", "low-battery" -> 72.0 to 72.0
             "eta" -> 22.0 to 56.0
             "recording" -> if (face.title == "Voice memo") 36.0 to 48.0 else 22.0 to 48.0
             "upload" -> 24.0 to 22.0
@@ -1189,7 +1215,7 @@ class IslandPillView(context: Context) : View(context) {
         val iconOnly = face.id == "lock" || face.id == "torch" || (face.id == "call" && face.value == "Missed")
         val captionInTrail = !iconOnly && face.icon != null && face.id != "live" && face.id != "now-playing" && face.id != "battery" && face.id != "upload" && face.id != "transfer"
         val trailW = if (captionInTrail && caption.isNotEmpty()) max(preset.second, IslandModes.compactTextWidth(caption)) else preset.second
-        val chargeText = if (face.id == "battery") IslandModes.percentWidth(face.value) else 0.0
+        val chargeText = if (face.id == "battery" || face.id == "low-battery") IslandModes.percentWidth(face.value) else 0.0
         return Spec(face.id, face.priority, 0, face.group, preset.first, trailW, face.minimal, face.body, chargeText)
     }
 

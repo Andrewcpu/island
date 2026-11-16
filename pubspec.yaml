@@ -1,7 +1,7 @@
 name: island
 description: Dynamic Island for Android, ported from the open-source islandcn component.
 publish_to: "none"
-version: 1.52.0+53
+version: 1.53.0+54
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
