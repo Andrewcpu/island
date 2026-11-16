@@ -239,17 +239,19 @@ object IslandMonitors {
     private fun isDark(state: Int): Boolean =
         state == Display.STATE_OFF || state == Display.STATE_DOZE || state == Display.STATE_DOZE_SUSPEND
 
-    /** Lock screen is its own activity. Unlock removes it. This does not peek. */
+    /**
+     * Lock screen is its own activity. Unlock removes it. This does not peek.
+     * isKeyguardLocked() needs no special permission. The locked-state listener
+     * does, and a normal app cannot hold it, so a short poll covers the gap
+     * between user-present and screen-on.
+     */
     fun watchKeyguard(context: Context) {
         if (keyguardWatching) return
         keyguardWatching = true
         val app = context.applicationContext
         keyguard = app.getSystemService(KeyguardManager::class.java)
         refreshLock()
-        mainHandler.postDelayed({ refreshLock() }, 400)
-        if (Build.VERSION.SDK_INT >= 33) {
-            keyguard?.addKeyguardLockedStateListener(app.mainExecutor) { _ -> refreshLock() }
-        }
+        mainHandler.post(lockPoll)
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_USER_PRESENT)
             addAction(Intent.ACTION_USER_UNLOCKED)
@@ -263,6 +265,14 @@ object IslandMonitors {
             app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             app.registerReceiver(receiver, filter)
+        }
+    }
+
+    private val lockPoll = object : Runnable {
+        override fun run() {
+            refreshLock()
+            val delay = if (keyguardLocked != false) 200L else 1000L
+            mainHandler.postDelayed(this, delay)
         }
     }
 
