@@ -295,8 +295,8 @@ class IslandOverlayService : Service() {
             instance?.pill?.setScreenLit(IslandMonitors.screenLit())
         }
 
-        fun onKeyguard(locked: Boolean) {
-            instance?.pill?.onLocked(locked)
+        fun onKeyguard(showing: Boolean, deviceLocked: Boolean) {
+            instance?.pill?.onKeyguard(showing, deviceLocked)
         }
 
         fun onTorch(level: Float, on: Boolean) {

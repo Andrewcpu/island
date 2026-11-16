@@ -109,6 +109,12 @@ internal object IslandModes {
         liked: Boolean? = null,
     ) {
         hits.clear()
+        // Authenticated, lock screen still up. While the card is still tall the
+        // shackle plays on the large padlock; the compact ear takes over as it shrinks.
+        if (id == "lock" && progress >= 0f && pill.height > 62.0) {
+            unlockingPadlock(canvas, pill, hole, progress, alpha)
+            return
+        }
         if (kind == Kind.EXPANDED) {
             drawExpanded(canvas, id, titleText, detail, valueText, accent, progress, glyph, elapsed, remaining, pill, hole, now, hits, alpha, art, playing, icon, liked)
         } else if (id == "live") {
@@ -187,7 +193,7 @@ internal object IslandModes {
             "upload", "transfer" -> ring(canvas, DRect(bubble.centerX - 10, bubble.centerY - 10, bubble.centerX + 10, bubble.centerY + 10), progress, accent, 0x29FFFFFF, 2.6f, alpha)
             "recording" -> meter(canvas, DRect(bubble.centerX - 11, bubble.centerY - 8, bubble.centerX + 11, bubble.centerY + 8), accent, 5, 2f, 2f, now, alpha, playing = true)
             "battery" -> batteryGlyph(canvas, bubble, charge, charging, accent, alpha)
-            "lock" -> glyph(canvas, "lock", lead, Color.WHITE, alpha)
+            "lock" -> if (progress >= 0f) padlockIn(canvas, lead, progress, alpha) else glyph(canvas, "lock", lead, Color.WHITE, alpha)
             "torch" -> flashlightIcon(canvas, lead, progress, alpha)
             else -> glyph(canvas, bubbleGlyph(id, accent), lead, accent, alpha)
         }
@@ -232,7 +238,7 @@ internal object IslandModes {
                 cover(canvas, art, lead, 6f, alpha)
                 if (trailRect != null) meter(canvas, trailRect, accent, 6, 2.4f, 1.9f, musicClock(now, playing), alpha, true)
             }
-            "lock" -> glyph(canvas, "lock", lead, Color.WHITE, alpha)
+            "lock" -> if (progress >= 0f) padlockIn(canvas, lead, progress, alpha) else glyph(canvas, "lock", lead, Color.WHITE, alpha)
             "torch" -> flashlightIcon(canvas, lead, progress, alpha)
             "call" -> {
                 if (valueText == "Ring") {
@@ -320,7 +326,7 @@ internal object IslandModes {
             "live" -> liveExpanded(canvas, pill, hole, titleText, detail, alpha, icon)
             "calendar" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, alpha, icon)
             "order-a", "order-b" -> eventExpanded(canvas, pill, titleText, detail, valueText, accent, alpha, icon)
-            "lock" -> faceIdMark(canvas, pill, hole, now, alpha)
+            "lock" -> if (progress >= 0f) unlockingPadlock(canvas, pill, hole, progress, alpha) else faceIdMark(canvas, pill, hole, now, alpha)
             "torch" -> torchExpanded(canvas, pill, hole, progress, hits, alpha)
             else -> personExpanded(canvas, pill, titleText, detail, alpha, icon)
         }
@@ -1039,8 +1045,43 @@ internal object IslandModes {
     }
 
     /**
-     * Expanded lock only. Geometry is measured from the reference glyph: an outer
-     * ring of four arcs centered on the sides, a full inner circle, vertical eyes,
+     * The same padlock as the compact lock. [open] 0 is the closed shackle; 1 swings
+     * it up around the left shoulder.
+     */
+    private fun padlockIn(canvas: Canvas, rect: DRect, open: Float, alpha: Int) {
+        val s = min(rect.width, rect.height).toFloat() * 0.34f
+        padlock(canvas, rect.centerX.toFloat(), rect.centerY.toFloat(), s, open, alpha)
+    }
+
+    private fun padlock(canvas: Canvas, cx: Float, cy: Float, s: Float, open: Float, alpha: Int) {
+        fill.color = Color.WHITE
+        fill.alpha = alpha
+        stroke.color = Color.WHITE
+        stroke.alpha = alpha
+        stroke.strokeWidth = (s * 0.16f).coerceAtLeast(1.4f)
+        stroke.strokeCap = Paint.Cap.ROUND
+        canvas.drawRoundRect(RectF(cx - s * 0.72f, cy - s * 0.15f, cx + s * 0.72f, cy + s * 0.95f), s * 0.22f, s * 0.22f, fill)
+        val amount = open.coerceIn(0f, 1f)
+        canvas.save()
+        if (amount > 0f) {
+            canvas.rotate(-48f * amount, cx - s * 0.48f, cy - s * 0.45f)
+        }
+        canvas.drawArc(RectF(cx - s * 0.48f, cy - s * 1.05f, cx + s * 0.48f, cy + s * 0.15f), 180f, 180f, false, stroke)
+        canvas.restore()
+    }
+
+    /** Expanded stand-in for Face ID once the device is unlocked but the lock screen is still up. */
+    private fun unlockingPadlock(canvas: Canvas, pill: DRect, hole: DRect, open: Float, alpha: Int) {
+        val top = hole.bottom + 8.0
+        val bottom = pill.bottom - 12.0
+        val room = (bottom - top).coerceAtLeast(28.0)
+        val s = (room / 2.15).toFloat().coerceIn(14f, 32f)
+        padlock(canvas, pill.centerX.toFloat(), ((top + bottom) / 2.0).toFloat(), s, open, alpha)
+    }
+
+    /**
+     * Expanded lock while the device still needs authentication. Geometry is measured from the reference glyph:
+     * an outer ring of four arcs centered on the sides, a full inner circle, vertical eyes,
      * a J nose, and a shallow smile. Strokes mask one radial gradient that sweeps
      * out from the center while the whole mark breathes.
      */

@@ -107,6 +107,7 @@ class IslandPillView(context: Context) : View(context) {
         val t = (SystemClock.uptimeMillis() - clock0) / 1000.0
         advance()
         rig.sync(t)
+        syncLock()
         if (wakeUntil > 0L && SystemClock.elapsedRealtime() >= wakeUntil) {
             val gen = wakeGen
             wakeUntil = 0L
@@ -534,15 +535,74 @@ class IslandPillView(context: Context) : View(context) {
         return super.dispatchTouchEvent(event)
     }
 
-    fun onLocked(locked: Boolean) {
-        if (locked) {
-            if (faces["lock"] != null) return
-            present(face("lock", "lock", "", "", "Locked", "", "", Color.WHITE, -1f, 90.0, 200))
+    private var lockAuthenticated = false
+    private var lockUnlockAt = Double.NaN
+    private var lockUnlockPending = false
+
+    /**
+     * Keyguard showing. [deviceLocked] is false once authentication has succeeded
+     * and the lock screen is still up. That edge swaps the icon and, if Face ID
+     * is open, plays the shackle while the card collapses.
+     */
+    fun onKeyguard(showing: Boolean, deviceLocked: Boolean) {
+        if (!showing) {
+            lockAuthenticated = false
+            lockUnlockAt = Double.NaN
+            lockUnlockPending = false
+            if (faces.remove("lock") == null) return
+            rig.end("lock")
+            kick()
             return
         }
-        if (faces.remove("lock") == null) return
-        rig.end("lock")
+        val authenticated = !deviceLocked
+        val existing = faces["lock"]
+        if (existing == null) {
+            lockAuthenticated = authenticated
+            lockUnlockAt = Double.NaN
+            lockUnlockPending = false
+            present(face("lock", "lock", "", "", "Locked", "", "", Color.WHITE, if (authenticated) 1f else -1f, 90.0, 200))
+            return
+        }
+        if (authenticated == lockAuthenticated) return
+        lockAuthenticated = authenticated
+        if (!authenticated) {
+            lockUnlockAt = Double.NaN
+            lockUnlockPending = false
+            existing.progress = -1f
+            kick()
+            return
+        }
+        // Start the shackle on the next frame, after the clock catches up.
+        lockUnlockPending = true
+        lockUnlockAt = Double.NaN
+        existing.progress = 0f
+        if (rig.expanded && rig.shownId() == "lock") rig.collapse()
         kick()
+    }
+
+    /** Shackle opens over a short beat, then stays open until the lock screen leaves. */
+    private fun syncLock() {
+        val face = faces["lock"] ?: return
+        if (!lockAuthenticated) {
+            face.progress = -1f
+            return
+        }
+        if (lockUnlockPending) {
+            lockUnlockPending = false
+            lockUnlockAt = rig.now
+        }
+        if (lockUnlockAt.isNaN()) {
+            face.progress = 1f
+            return
+        }
+        val t = ((rig.now - lockUnlockAt) / 0.55).toFloat()
+        if (t >= 1f) {
+            lockUnlockAt = Double.NaN
+            face.progress = 1f
+            return
+        }
+        val u = t.coerceIn(0f, 1f)
+        face.progress = u * u * (3f - 2f * u)
     }
 
     fun onTorch(level: Float, on: Boolean) {
@@ -1280,7 +1340,9 @@ class IslandPillView(context: Context) : View(context) {
 
     private fun ticking(): Boolean {
         if (faces.keys.any { it == "timer" || it == "timer-done" || it == "recording" || it == "call" || it == "upload" || it == "transfer" || it == "now-playing" || it == "live" }) return true
-        return faces.containsKey("lock") && rig.look() == Kind.EXPANDED
+        val lock = faces["lock"] ?: return false
+        if (lockUnlockPending || (lock.progress >= 0f && lock.progress < 1f)) return true
+        return lock.progress < 0f && rig.look() == Kind.EXPANDED
     }
 
     private fun kick() {

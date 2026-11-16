@@ -40,7 +40,10 @@ object IslandMonitors {
     private var keyguardWatching = false
     private var torchWatching = false
     private var keyguard: KeyguardManager? = null
-    private var keyguardLocked: Boolean? = null
+    private var lockPhase: LockPhase? = null
+
+    /** Gone, still needs authentication, or authenticated while the lock screen is up. */
+    private enum class LockPhase { GONE, LOCKED, UNLOCKED }
     private var camera: CameraManager? = null
     private var torchId: String? = null
     private var torchMax = 1
@@ -240,10 +243,13 @@ object IslandMonitors {
         state == Display.STATE_OFF || state == Display.STATE_DOZE || state == Display.STATE_DOZE_SUSPEND
 
     /**
-     * Lock screen is its own activity. Unlock removes it. This does not peek.
-     * isKeyguardLocked() needs no special permission. The locked-state listener
-     * does, and a normal app cannot hold it, so a short poll covers the gap
-     * between user-present and screen-on.
+     * Lock screen is its own activity. Leaving the lock screen removes it.
+     * isKeyguardLocked() is true whenever the lock screen is showing, including
+     * after a successful face or PIN unlock while it is still waiting to be
+     * dismissed, and when the screen turns off. isDeviceLocked() stays true only
+     * until that authentication succeeds. Swipe-only locks count as unlocked.
+     * Neither call needs a signature permission. The locked-state listener does,
+     * so a short poll covers the gap between user-present and screen-on.
      */
     fun watchKeyguard(context: Context) {
         if (keyguardWatching) return
@@ -271,16 +277,23 @@ object IslandMonitors {
     private val lockPoll = object : Runnable {
         override fun run() {
             refreshLock()
-            val delay = if (keyguardLocked != false) 200L else 1000L
+            val delay = if (lockPhase == LockPhase.GONE) 1000L else 200L
             mainHandler.postDelayed(this, delay)
         }
     }
 
     fun refreshLock() {
-        val locked = keyguard?.isKeyguardLocked == true
-        if (keyguardLocked == locked) return
-        keyguardLocked = locked
-        IslandOverlayService.onKeyguard(locked)
+        val guard = keyguard
+        val showing = guard?.isKeyguardLocked == true
+        val deviceLocked = showing && guard?.isDeviceLocked == true
+        val phase = when {
+            !showing -> LockPhase.GONE
+            deviceLocked -> LockPhase.LOCKED
+            else -> LockPhase.UNLOCKED
+        }
+        if (lockPhase == phase) return
+        lockPhase = phase
+        IslandOverlayService.onKeyguard(showing, deviceLocked)
     }
 
     /**
