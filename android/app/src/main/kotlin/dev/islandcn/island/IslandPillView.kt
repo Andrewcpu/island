@@ -669,10 +669,10 @@ class IslandPillView(context: Context) : View(context) {
 
     private var torchDrag = false
 
-    private fun dragTorch(x: Double) {
+    private fun dragTorch(x: Double, y: Double) {
         val track = hits.slider
         if (track.width < 1.0) return
-        val fraction = ((x - track.left) / track.width).toFloat().coerceIn(0f, 1f)
+        val fraction = IslandModes.torchFraction(x, y)
         faces["torch"]?.progress = fraction
         IslandMonitors.setTorchFraction(fraction)
         kick()
@@ -686,20 +686,20 @@ class IslandPillView(context: Context) : View(context) {
             MotionEvent.ACTION_DOWN -> {
                 if (rig.look() == Kind.EXPANDED && rig.shownId() == "torch" && hit(hits.slider, x, y)) {
                     torchDrag = true
-                    dragTorch(x)
+                    dragTorch(x, y)
                     return true
                 }
             }
             MotionEvent.ACTION_MOVE -> {
                 if (torchDrag) {
-                    dragTorch(x)
+                    dragTorch(x, y)
                     return true
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (torchDrag) {
                     torchDrag = false
-                    if (event.actionMasked == MotionEvent.ACTION_UP) dragTorch(x)
+                    if (event.actionMasked == MotionEvent.ACTION_UP) dragTorch(x, y)
                     return true
                 }
             }

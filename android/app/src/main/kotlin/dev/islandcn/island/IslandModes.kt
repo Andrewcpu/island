@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ComposeShader
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
@@ -83,6 +84,15 @@ internal object IslandModes {
     private var iconPause: Drawable? = null
     private var iconPrevious: Drawable? = null
     private var iconNext: Drawable? = null
+    private var iconFlashlight: Drawable? = null
+    private var arcCx = 0.0
+    private var arcCy = 0.0
+    private var arcR = 0.0
+
+    /** Shallow arc, y-down. Left end is dim, right end is bright. atan2 reads 230°..310° as -130°..-50°. */
+    private const val TORCH_ARC_START = 230f
+    private const val TORCH_ARC_SWEEP = 80.0
+    private const val TORCH_ARC_LEFT = -130.0
 
     /** Material Icons: missed call, chat, and the rounded call and transport glyphs. */
     fun install(context: Context) {
@@ -95,6 +105,18 @@ internal object IslandModes {
         iconPause = ContextCompat.getDrawable(context, R.drawable.ic_pause)?.mutate()
         iconPrevious = ContextCompat.getDrawable(context, R.drawable.ic_skip_previous)?.mutate()
         iconNext = ContextCompat.getDrawable(context, R.drawable.ic_skip_next)?.mutate()
+        iconFlashlight = ContextCompat.getDrawable(context, R.drawable.ic_flashlight)?.mutate()
+    }
+
+    /**
+     * Brightness for a finger on the torch arc. The right end is full, the left end is off.
+     * Drawn geometry is the source of the angles, so the drag matches the stroke.
+     */
+    fun torchFraction(x: Double, y: Double): Float {
+        if (arcR < 2.0) return 0f
+        val deg = Math.toDegrees(atan2(y - arcCy, x - arcCx))
+        if (deg > 0.0) return if (x >= arcCx) 1f else 0f
+        return ((deg - TORCH_ARC_LEFT) / TORCH_ARC_SWEEP).toFloat().coerceIn(0f, 1f)
     }
 
     fun draw(
@@ -183,7 +205,7 @@ internal object IslandModes {
             "message" -> 76.0 + (body - 48.0).coerceAtLeast(0.0)
             "timer", "timer-done" -> 80.0
             "lock" -> 176.0
-            "torch" -> 100.0
+            "torch" -> 156.0
             "low-battery" -> 86.0
             else -> 70.0
         }
@@ -212,7 +234,7 @@ internal object IslandModes {
             "battery" -> batteryGlyph(canvas, bubble, charge, charging, accent, alpha)
             "low-battery" -> batteryGlyph(canvas, bubble, charge, false, accent, alpha)
             "lock" -> if (progress >= 0f) padlockIn(canvas, lead, progress, alpha) else glyph(canvas, "lock", lead, Color.WHITE, alpha)
-            "torch" -> flashlightIcon(canvas, lead, progress, alpha)
+            "torch" -> symbol(canvas, iconFlashlight, lead, Color.WHITE, alpha)
             else -> glyph(canvas, bubbleGlyph(id, accent), lead, accent, alpha)
         }
     }
@@ -257,7 +279,7 @@ internal object IslandModes {
                 if (trailRect != null) meter(canvas, trailRect, accent, 6, 2.4f, 1.9f, musicClock(now, playing), alpha, true)
             }
             "lock" -> if (progress >= 0f) padlockIn(canvas, lead, progress, alpha) else glyph(canvas, "lock", lead, Color.WHITE, alpha)
-            "torch" -> flashlightIcon(canvas, lead, progress, alpha)
+            "torch" -> symbol(canvas, iconFlashlight, lead, Color.WHITE, alpha)
             "call" -> {
                 if (valueText == "Ring") {
                     avatar(canvas, titleText, lead, alpha)
@@ -1241,53 +1263,129 @@ internal object IslandModes {
         )
     }
 
-    /** Flashlight whose beam grows with [level], the way the iOS island icon does. */
-    private fun flashlightIcon(canvas: Canvas, rect: DRect, level: Float, alpha: Int) {
-        val t = level.coerceIn(0f, 1f)
-        val cx = rect.centerX.toFloat()
-        val cy = rect.centerY.toFloat()
-        val body = min(rect.width, rect.height).toFloat().coerceAtLeast(8f) * 0.34f
-        val beam = body * (0.35f + 1.15f * t)
-        fill.color = 0xFFFFD60A.toInt()
-        fill.alpha = (alpha * (0.18f + 0.82f * t)).toInt()
-        val beamPath = android.graphics.Path()
-        val lamp = cy - body * 0.55f
-        beamPath.moveTo(cx - body * 0.42f, lamp)
-        beamPath.lineTo(cx + body * 0.42f, lamp)
-        beamPath.lineTo(cx + body * (0.7f + 0.85f * t), lamp - beam)
-        beamPath.lineTo(cx - body * (0.7f + 0.85f * t), lamp - beam)
-        beamPath.close()
-        canvas.drawPath(beamPath, fill)
-        fill.color = Color.WHITE
-        fill.alpha = alpha
-        canvas.drawRoundRect(RectF(cx - body * 0.55f, cy - body * 0.15f, cx + body * 0.55f, cy + body * 1.15f), body * 0.2f, body * 0.2f, fill)
-        fill.color = 0xFFFFD60A.toInt()
-        fill.alpha = (alpha * (0.4f + 0.6f * t)).toInt()
-        canvas.drawRoundRect(RectF(cx - body * 0.72f, lamp, cx + body * 0.72f, lamp + body * 0.42f), body * 0.12f, body * 0.12f, fill)
-    }
-
-    /** Expanded torch: the icon tracks the level, and the track is the brightness slider. */
+    /**
+     * iOS flashlight card. Top to bottom: the arc (right end is full brightness), the beam,
+     * then the stock flashlight standing under the arc. Beam strength follows [level].
+     */
     private fun torchExpanded(canvas: Canvas, pill: DRect, hole: DRect, level: Float, hits: Hits, alpha: Int) {
         val t = level.coerceIn(0f, 1f)
-        val row = max(pill.centerY, hole.bottom + 22.0)
-        val icon = DRect(pill.left + 22.0, row - 18.0, pill.left + 58.0, row + 18.0)
-        flashlightIcon(canvas, icon, t, alpha)
-        val track = DRect(icon.right + 16.0, row - 14.0, pill.right - 22.0, row + 14.0)
-        hits.slider = track.inflate(10.0)
-        fill.color = 0x33FFFFFF
-        fill.alpha = alpha
-        canvas.drawRoundRect(track.toRect(), 14f, 14f, fill)
-        val fillRight = track.left + track.width * t
-        if (fillRight - track.left > 1.0) {
-            fill.color = 0xFFFFD60A.toInt()
-            fill.alpha = alpha
-            canvas.drawRoundRect(RectF(track.left.toFloat(), track.top.toFloat(), fillRight.toFloat(), track.bottom.toFloat()), 14f, 14f, fill)
-        }
+        val cx = pill.centerX
+        val body = 34.0
+        val icon = DRect(cx - body / 2.0, pill.bottom - 18.0 - body, cx + body / 2.0, pill.bottom - 18.0)
+        val peakY = max(pill.top + 26.0, hole.bottom + 10.0)
+        val radius = min((pill.width - 88.0) / 2.0, (icon.top - peakY) * 1.15).coerceIn(48.0, 120.0)
+        arcCx = cx
+        arcCy = peakY + radius
+        arcR = radius
+        val lensY = (icon.top + body * 0.06).toFloat()
+        val gap = (lensY - (peakY + radius * 0.22)).toFloat().coerceAtLeast(12f)
+        val reach = gap * (0.42f + 0.58f * t)
+        val spread = (radius * 0.62 * (0.22 + 0.78 * t)).toFloat()
+        torchBeam(canvas, cx.toFloat(), lensY, (body * 0.22).toFloat(), reach, spread, alpha, t)
+        symbol(canvas, iconFlashlight, icon, Color.WHITE, alpha)
+        val oval = RectF(
+            (cx - radius).toFloat(),
+            (arcCy - radius).toFloat(),
+            (cx + radius).toFloat(),
+            (arcCy + radius).toFloat(),
+        )
+        stroke.style = Paint.Style.STROKE
+        stroke.strokeCap = Paint.Cap.ROUND
+        stroke.strokeWidth = 1.7f
+        stroke.color = 0x99FFFFFF.toInt()
+        stroke.alpha = alpha
+        canvas.drawArc(oval, TORCH_ARC_START, TORCH_ARC_SWEEP.toFloat(), false, stroke)
+        val end = Math.toRadians(TORCH_ARC_START + TORCH_ARC_SWEEP)
+        val sunX = (cx + (radius + 14.0) * cos(end)).toFloat()
+        val sunY = (arcCy + (radius + 14.0) * sin(end)).toFloat()
+        sunGlyph(canvas, sunX, sunY, 6.4f, alpha)
+        val left = cx + radius * cos(Math.toRadians(TORCH_ARC_START.toDouble()))
+        hits.slider = DRect(left - 16.0, peakY - 20.0, sunX.toDouble() + 16.0, arcCy - radius * 0.35)
+    }
+
+    /** Cone from the lens, white at the glass, widening up, with a faint spectrum at the edge. */
+    private fun torchBeam(
+        canvas: Canvas,
+        cx: Float,
+        lensY: Float,
+        lensHalf: Float,
+        reach: Float,
+        spread: Float,
+        alpha: Int,
+        t: Float,
+    ) {
+        if (t < 0.02f) return
+        val topY = lensY - reach
+        val cone = Path()
+        cone.moveTo(cx - lensHalf, lensY)
+        cone.lineTo(cx + lensHalf, lensY)
+        cone.lineTo(cx + spread, topY)
+        cone.lineTo(cx - spread, topY)
+        cone.close()
+        val gain = (alpha * (0.35f + 0.65f * t)).toInt().coerceIn(0, 255)
+        val fade = LinearGradient(
+            cx,
+            lensY,
+            cx,
+            topY,
+            intArrayOf(Color.WHITE, 0xCCFFFFFF.toInt(), 0x00FFFFFF),
+            floatArrayOf(0f, 0.28f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        val fringe = LinearGradient(
+            cx - spread,
+            lensY,
+            cx + spread,
+            lensY,
+            intArrayOf(0x88B9E6FF.toInt(), 0x22FFFFFF, Color.WHITE, 0x22FFFFFF, 0x88FFE09A.toInt()),
+            floatArrayOf(0f, 0.22f, 0.5f, 0.78f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        fill.shader = ComposeShader(fringe, fade, PorterDuff.Mode.DST_IN)
+        fill.alpha = gain
+        canvas.drawPath(cone, fill)
+        val core = Path()
+        val coreSpread = lensHalf + (spread - lensHalf) * 0.34f
+        val coreTop = lensY - reach * 0.62f
+        core.moveTo(cx - lensHalf * 0.55f, lensY)
+        core.lineTo(cx + lensHalf * 0.55f, lensY)
+        core.lineTo(cx + coreSpread, coreTop)
+        core.lineTo(cx - coreSpread, coreTop)
+        core.close()
+        fill.shader = LinearGradient(
+            cx,
+            lensY,
+            cx,
+            coreTop,
+            intArrayOf(Color.WHITE, 0x00FFFFFF),
+            floatArrayOf(0f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        fill.alpha = gain
+        canvas.drawPath(core, fill)
+        fill.shader = null
         fill.color = Color.WHITE
-        fill.alpha = alpha
-        val knob = 11f
-        val kx = fillRight.toFloat().coerceIn((track.left + knob).toFloat(), (track.right - knob).toFloat())
-        canvas.drawCircle(kx, row.toFloat(), knob, fill)
+        fill.alpha = gain
+        canvas.drawCircle(cx, lensY, lensHalf * 1.05f, fill)
+    }
+
+    private fun sunGlyph(canvas: Canvas, x: Float, y: Float, r: Float, alpha: Int) {
+        val ink = (alpha * 0.9f).toInt().coerceIn(0, 255)
+        fill.shader = null
+        fill.color = Color.WHITE
+        fill.alpha = ink
+        canvas.drawCircle(x, y, r * 0.34f, fill)
+        stroke.style = Paint.Style.STROKE
+        stroke.strokeCap = Paint.Cap.ROUND
+        stroke.strokeWidth = (r * 0.14f).coerceAtLeast(1.1f)
+        stroke.color = Color.WHITE
+        stroke.alpha = ink
+        for (i in 0 until 8) {
+            val a = i * PI / 4.0
+            val c = cos(a).toFloat()
+            val s = sin(a).toFloat()
+            canvas.drawLine(x + c * r * 0.52f, y + s * r * 0.52f, x + c * r, y + s * r, stroke)
+        }
     }
 
     private fun glyph(canvas: Canvas, name: String, rect: DRect?, color: Int, alpha: Int) {
