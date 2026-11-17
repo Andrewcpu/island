@@ -296,6 +296,10 @@ class IslandOverlayService : Service() {
             instance?.pill?.setScreenLit(IslandMonitors.screenLit())
         }
 
+        internal fun statusFrame(frame: IslandStatusStack.Frame?) {
+            instance?.pill?.setStatusStack(frame)
+        }
+
         fun onKeyguard(showing: Boolean, deviceLocked: Boolean) {
             instance?.pill?.onKeyguard(showing, deviceLocked)
         }
