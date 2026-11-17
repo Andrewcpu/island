@@ -41,6 +41,11 @@ object IslandMonitors {
     private var torchWatching = false
     private var keyguard: KeyguardManager? = null
     private var lockPhase: LockPhase? = null
+    /**
+     * Screen off re-locks before isDeviceLocked flips. Until that flag is seen,
+     * a keyguard that is still showing stays the closed lock.
+     */
+    private var awaitingRelock = false
 
     /** Gone, still needs authentication, or authenticated while the lock screen is up. */
     private enum class LockPhase { GONE, LOCKED, UNLOCKED }
@@ -169,7 +174,10 @@ object IslandMonitors {
                     Intent.ACTION_SCREEN_OFF -> {
                         awake = false
                         IslandOverlayService.syncChrome()
+                        markSleepRelock()
                         refreshLock()
+                        mainHandler.postDelayed({ refreshLock() }, 80)
+                        mainHandler.postDelayed({ refreshLock() }, 250)
                     }
                     Intent.ACTION_SCREEN_ON -> {
                         awake = true
@@ -225,12 +233,15 @@ object IslandMonitors {
         val next = displayState(app)
         if (next == displayState) return
         displayState = next
+        val dark = isDark(next)
         awake = when {
-            isDark(next) -> false
+            dark -> false
             next == Display.STATE_ON -> true
             else -> awake
         }
+        if (dark) markSleepRelock()
         IslandOverlayService.syncChrome()
+        if (dark) refreshLock()
     }
 
     private fun displayState(app: Context): Int =
@@ -282,10 +293,22 @@ object IslandMonitors {
         }
     }
 
+    /** The first screen-off closes the icon. isDeviceLocked lags that event. */
+    private fun markSleepRelock() {
+        val guard = keyguard ?: return
+        if (guard.isKeyguardSecure || guard.isDeviceSecure) awaitingRelock = true
+    }
+
     fun refreshLock() {
-        val guard = keyguard
-        val showing = guard?.isKeyguardLocked == true
-        val deviceLocked = showing && guard?.isDeviceLocked == true
+        val guard = keyguard ?: return
+        val apiShowing = guard.isKeyguardLocked == true
+        val apiLocked = guard.isDeviceLocked == true
+        val secure = guard.isKeyguardSecure || guard.isDeviceSecure
+        if (apiLocked) awaitingRelock = false
+        if (awake && !apiShowing) awaitingRelock = false
+        val forced = awaitingRelock && secure && (apiShowing || !awake)
+        val showing = apiShowing || (forced && !awake)
+        val deviceLocked = apiLocked || forced
         val phase = when {
             !showing -> LockPhase.GONE
             deviceLocked -> LockPhase.LOCKED

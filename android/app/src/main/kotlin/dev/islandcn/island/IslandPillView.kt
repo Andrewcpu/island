@@ -88,6 +88,11 @@ class IslandPillView(context: Context) : View(context) {
     private var transferStarted = 0L
     private var micOn = false
     private var mediaAt = 0L
+    /** elapsedRealtime when playback last stopped moving. 0 while something is playing. */
+    private var musicIdleSince = 0L
+    private var musicIdlePosition = 0L
+    /** Paused or stopped with no progress for two minutes. Playing clears it. */
+    private var musicIdleHidden = false
     private val choreographer = Choreographer.getInstance()
 
     private val black = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
@@ -195,8 +200,18 @@ class IslandPillView(context: Context) : View(context) {
     }
 
     fun onMedia(track: IslandMedia.Track?) {
-        if (track == null) {
-            liveMusic = false
+        val now = SystemClock.elapsedRealtime()
+        if (track != null && track.playing) {
+            musicIdleHidden = false
+            musicIdleSince = 0L
+            musicIdlePosition = track.position
+            liveMusic = true
+            if (sample == "music") sample = null
+            showTrack(track)
+            return
+        }
+        if (musicIdleHidden) return
+        if (track == null && !liveMusic) {
             mediaTrack = null
             if (sample == "music") sample = null
             if (faces.remove("now-playing") != null) {
@@ -205,9 +220,26 @@ class IslandPillView(context: Context) : View(context) {
             }
             return
         }
+        val position = track?.position ?: mediaTrack?.position ?: 0L
+        if (musicIdleSince == 0L || abs(position - musicIdlePosition) > 1500L) {
+            musicIdleSince = now
+            musicIdlePosition = position
+        }
+        if (liveMusic && now - musicIdleSince >= 120_000L) {
+            musicIdleHidden = true
+            liveMusic = false
+            mediaTrack = null
+            musicIdleSince = 0L
+            if (faces.remove("now-playing") != null) {
+                rig.end("now-playing")
+                kick()
+            }
+            return
+        }
+        val shown = track ?: mediaTrack?.copy(playing = false) ?: return
         liveMusic = true
         if (sample == "music") sample = null
-        showTrack(track)
+        showTrack(shown)
     }
 
     fun onLiveCall(state: String, label: String, icon: android.graphics.Bitmap? = null) {
@@ -732,24 +764,21 @@ class IslandPillView(context: Context) : View(context) {
         val shell = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
         // The other half stays until it has slid under the main bar and the two are one shape.
         // Painting it first is what puts that lobe behind the bar instead of across its face.
-        val bubble = rig.bubble
+        val bubble = rig.bubble?.let { scaled(it, rig.bubbleScale.pos) }
         val bubblePath = bubble?.let { continuousRect(it, it.height / 2, 0.72) }
-        if (bubble != null && bubblePath != null) {
-            around(canvas, bubble, rig.bubbleScale.pos.toFloat()) {
-                canvas.drawPath(bubblePath, black)
-            }
-        }
+        if (bubblePath != null) canvas.drawPath(bubblePath, black)
         val neckGap = if (rig.tightNeck()) 0.01 else 5.0
-        if (bubble != null) canvas.drawPath(bridgeNeck(pill, bubble, neckGap), black)
+        val neck = if (bubble != null) bridgeNeck(pill, bubble, neckGap) else null
+        if (neck != null && !neck.isEmpty) canvas.drawPath(neck, black)
+        // A neck or an overlap is one shape. Stroking each outline would cut a flat line across it.
+        val joined = bubble != null && (bubble.left - pill.right) <= neckGap
         val shown = rig.look()
-        if (screenLit && rig.showKeyline && shown != Kind.IDLE && bubble != null && bubblePath != null) {
+        if (!joined && screenLit && rig.showKeyline && shown != Kind.IDLE && bubblePath != null) {
             val extra = ((pill.width - rig.sensor.width) / 6.0).coerceIn(0.0, 1.0)
             keyline.alpha = (0.16 * extra * 255).toInt()
-            if (keyline.alpha > 2) {
-                around(canvas, bubble, rig.bubbleScale.pos.toFloat()) { canvas.drawPath(bubblePath, keyline) }
-            }
+            if (keyline.alpha > 2) canvas.drawPath(bubblePath, keyline)
         }
-        drawBubbleContent(canvas, bubble)
+        drawBubbleContent(canvas, rig.bubble)
         around(canvas, pill, rig.pillScale.pos.toFloat()) {
             if (screenLit && expand > 0.02) {
                 shadow.alpha = (90 * expand).toInt()
@@ -760,7 +789,7 @@ class IslandPillView(context: Context) : View(context) {
             }
             canvas.drawPath(shell, black)
         }
-        if (screenLit && rig.showKeyline && shown != Kind.IDLE) {
+        if (!joined && screenLit && rig.showKeyline && shown != Kind.IDLE) {
             val extra = ((pill.width - rig.sensor.width) / 6.0).coerceIn(0.0, 1.0)
             keyline.alpha = (0.16 * extra * (if (shown == Kind.EXPANDED) 0.93 else 1.0) * 255).toInt()
             if (keyline.alpha > 2) {

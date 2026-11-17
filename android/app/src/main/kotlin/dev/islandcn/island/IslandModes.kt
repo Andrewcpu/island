@@ -77,12 +77,24 @@ internal object IslandModes {
     private val faceIn = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
     private var phoneMissed: Drawable? = null
     private var chatBubble: Drawable? = null
+    private var iconCall: Drawable? = null
+    private var iconCallEnd: Drawable? = null
+    private var iconPlay: Drawable? = null
+    private var iconPause: Drawable? = null
+    private var iconPrevious: Drawable? = null
+    private var iconNext: Drawable? = null
 
-    /** Material Icons filled: phone_missed and chat_bubble. */
+    /** Material Icons: missed call, chat, and the rounded call and transport glyphs. */
     fun install(context: Context) {
         if (phoneMissed != null) return
         phoneMissed = ContextCompat.getDrawable(context, R.drawable.ic_phone_missed)?.mutate()
         chatBubble = ContextCompat.getDrawable(context, R.drawable.ic_chat_bubble)?.mutate()
+        iconCall = ContextCompat.getDrawable(context, R.drawable.ic_call)?.mutate()
+        iconCallEnd = ContextCompat.getDrawable(context, R.drawable.ic_call_end)?.mutate()
+        iconPlay = ContextCompat.getDrawable(context, R.drawable.ic_play_arrow)?.mutate()
+        iconPause = ContextCompat.getDrawable(context, R.drawable.ic_pause)?.mutate()
+        iconPrevious = ContextCompat.getDrawable(context, R.drawable.ic_skip_previous)?.mutate()
+        iconNext = ContextCompat.getDrawable(context, R.drawable.ic_skip_next)?.mutate()
     }
 
     fun draw(
@@ -443,56 +455,16 @@ internal object IslandModes {
         canvas.drawText(shown, left.toFloat(), baseline.toFloat(), paint)
     }
 
-    /** Play and pause at 30pt, previous and next at 34pt. Even filled shapes, not stroked doodles. */
+    /** Play and pause at 30pt, previous and next at 34pt. Material rounded glyphs. */
     private fun musicGlyph(canvas: Canvas, name: String, cx: Double, cy: Double, box: Double, color: Int, alpha: Int) {
-        fill.color = color
-        fill.alpha = alpha
-        val x = cx.toFloat()
-        val y = cy.toFloat()
-        val scale = box.toFloat()
-        when (name) {
-            "pause" -> {
-                val h = scale * 27.6f / 30f
-                val w = scale * 5.2f / 30f
-                val gap = scale * 4.4f / 30f
-                val top = y - h / 2f
-                canvas.drawRoundRect(RectF(x - gap / 2f - w, top, x - gap / 2f, top + h), w / 2f, w / 2f, fill)
-                canvas.drawRoundRect(RectF(x + gap / 2f, top, x + gap / 2f + w, top + h), w / 2f, w / 2f, fill)
-            }
-            "play" -> {
-                val h = scale * 27.6f / 30f
-                val w = scale * 22f / 30f
-                val left = x - w / 3f
-                val path = android.graphics.Path()
-                path.moveTo(left, y - h / 2f)
-                path.lineTo(left + w, y)
-                path.lineTo(left, y + h / 2f)
-                path.close()
-                canvas.drawPath(path, fill)
-            }
-            else -> {
-                val pointingRight = name != "back"
-                val h = scale * 20f / 34f
-                val w = scale * 15.75f / 34f
-                val origin = x - scale * 31.5f / 34f / 2f
-                fun triangle(edge: Float) {
-                    val path = android.graphics.Path()
-                    if (pointingRight) {
-                        path.moveTo(edge, y - h / 2f)
-                        path.lineTo(edge + w, y)
-                        path.lineTo(edge, y + h / 2f)
-                    } else {
-                        path.moveTo(edge + w, y - h / 2f)
-                        path.lineTo(edge, y)
-                        path.lineTo(edge + w, y + h / 2f)
-                    }
-                    path.close()
-                    canvas.drawPath(path, fill)
-                }
-                triangle(origin)
-                triangle(origin + w)
-            }
+        val icon = when (name) {
+            "pause" -> iconPause
+            "play" -> iconPlay
+            "back" -> iconPrevious
+            else -> iconNext
         }
+        val half = box / 2.0
+        symbol(canvas, icon, DRect(cx - half, cy - half, cx + half, cy + half), color, alpha)
     }
 
     private fun callExpanded(canvas: Canvas, pill: DRect, caller: String, detail: String, valueText: String, hits: Hits, alpha: Int, icon: Bitmap?) {
@@ -507,12 +479,12 @@ internal object IslandModes {
             hits.decline = DRect(hits.accept.left - 10.5 - button, cy - 25, hits.accept.left - 10.5, cy + 25)
             circle(canvas, hits.decline, 0xFFFE4345.toInt(), alpha)
             circle(canvas, hits.accept, 0xFF31D259.toInt(), alpha)
-            glyph(canvas, "hangup", hits.decline, Color.WHITE, alpha)
-            glyph(canvas, "phone", hits.accept, Color.WHITE, alpha)
+            buttonIcon(canvas, iconCallEnd, hits.decline, Color.WHITE, alpha)
+            buttonIcon(canvas, iconCall, hits.accept, Color.WHITE, alpha)
         } else {
             hits.decline = DRect(pill.right - edge - button, cy - 25, pill.right - edge, cy + 25)
             circle(canvas, hits.decline, 0xFFFE4345.toInt(), alpha)
-            glyph(canvas, "hangup", hits.decline, Color.WHITE, alpha)
+            buttonIcon(canvas, iconCallEnd, hits.decline, Color.WHITE, alpha)
             meter(canvas, DRect(hits.decline.left - 48, cy - 9, hits.decline.left - 8, cy + 9), 0xFF76FB73.toInt(), 8, 2.25f, 1.13f, 0.0, alpha, true, twoTone = true)
         }
         val textLeft = pill.left + 76.5
@@ -1061,6 +1033,18 @@ internal object IslandModes {
         canvas.drawOval(rect.toRect(), fill)
     }
 
+    /** Rounded phone glyphs, inset so they sit inside the round buttons. */
+    private fun buttonIcon(canvas: Canvas, drawable: Drawable?, rect: DRect, color: Int, alpha: Int) {
+        val pad = min(rect.width, rect.height) * 0.22
+        symbol(
+            canvas,
+            drawable,
+            DRect(rect.left + pad, rect.top + pad, rect.right - pad, rect.bottom - pad),
+            color,
+            alpha,
+        )
+    }
+
     private fun symbol(canvas: Canvas, drawable: Drawable?, rect: DRect, color: Int, alpha: Int) {
         val icon = drawable ?: return
         val size = min(rect.width, rect.height).toFloat().coerceAtLeast(1f)
@@ -1075,9 +1059,9 @@ internal object IslandModes {
     }
 
     /**
-     * Closed at 0, open at 1. Filled body, no keyhole. The seated leg stays put.
-     * The free end travels up and around to the left until the shackle is swung
-     * over that side, matching the open padlock.
+     * Closed at 0, open at 1. The body is the same rect as the locked glyph, so the
+     * open icon keeps that center. No keyhole. The right leg stays seated. The free
+     * end travels up and over to the right.
      */
     private fun padlockIn(canvas: Canvas, rect: DRect, open: Float, alpha: Int) {
         val s = min(rect.width, rect.height).toFloat() * 0.34f
@@ -1093,15 +1077,14 @@ internal object IslandModes {
         stroke.strokeCap = Paint.Cap.ROUND
         stroke.strokeJoin = Paint.Join.ROUND
         val t = smoothStep(open.coerceIn(0f, 1f))
-        val bw = s * 1.35f
-        val bh = s * 1.02f
-        val top = cy - bh * 0.32f
-        val body = RectF(cx - bw / 2f, top, cx + bw / 2f, top + bh)
-        val px = body.left + bw * 0.34f
-        val py = top - s * 0.58f
-        val seat = top + s * 0.28f
+        // Same body as glyph("lock"), so the open and closed icons share a center.
+        val body = RectF(cx - s * 0.72f, cy - s * 0.15f, cx + s * 0.72f, cy + s * 0.95f)
+        val px = cx + s * 0.46f
+        // Outer top of the arch lines up with the locked shackle, not above it.
+        val py = cy - s * 0.60f
+        val seat = body.top + s * 0.28f
         val radius = s * 0.40f
-        val phi = (-PI * t).toFloat()
+        val phi = (PI * (1.0 + t)).toFloat()
         val fsx = px + 2f * radius * cos(phi)
         val fsy = py + 2f * radius * sin(phi)
         val mx = (px + fsx) / 2f
@@ -1123,7 +1106,7 @@ internal object IslandModes {
             tangX = -tangX
             tangY = -tangY
         }
-        val leg = s * (0.78f * (1f - t) + 0.50f * t)
+        val leg = s * (0.78f * (1f - t) + 0.42f * t)
         path.lineTo(fsx + tangX * leg, fsy + tangY * leg)
         canvas.drawPath(path, stroke)
         canvas.drawRoundRect(body, s * 0.22f, s * 0.22f, fill)
@@ -1132,13 +1115,13 @@ internal object IslandModes {
     /** Semicircle that bulges upward, away from the lock body. */
     private fun upperSweep(mx: Float, my: Float, radius: Float, aP: Float): Float {
         var bestY = Float.POSITIVE_INFINITY
-        var bestX = Float.POSITIVE_INFINITY
+        var bestX = Float.NEGATIVE_INFINITY
         var best = PI.toFloat()
         for (sweep in floatArrayOf(PI.toFloat(), -PI.toFloat())) {
             val am = aP + sweep / 2f
             val y = my + radius * sin(am)
             val x = mx + radius * cos(am)
-            if (y < bestY - 0.01f || (abs(y - bestY) <= 0.01f && x < bestX)) {
+            if (y < bestY - 0.01f || (abs(y - bestY) <= 0.01f && x > bestX)) {
                 bestY = y
                 bestX = x
                 best = sweep

@@ -4,6 +4,7 @@ import android.graphics.Path
 import android.graphics.RectF
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
@@ -259,6 +260,8 @@ internal class IslandRig {
     var absorbLive = false
         private set
     private var absorbAt = 0.0
+    /** Expanded shape held until the lobe has slid under the bar. */
+    private var absorbTarget: Shape? = null
     private var bubbleCutAt = -1.0
     private var wakeGen = 0
 
@@ -550,11 +553,24 @@ internal class IslandRig {
             for (item in due) item.second()
         }
         for (track in tracks()) track.step(now)
-        // The lobe stays until it sits inside the main pill. Dropping it when the
-        // body merely starts to grow pops the other half off before the merge.
-        if (absorbLive && kind == Kind.EXPANDED && bubbleHeight.pos >= 1.0 && now >= absorbAt + 0.222) {
-            val covered = bubbleLeft.pos >= left.pos - 1.0 && bubbleRight.pos <= right.pos + 1.0
-            if (covered) bubbleHeight.aim(0.0, MotionSpec.tween(0.0), now)
+        // The main bar stays a capsule until the lobe is inside it. Growing a tall
+        // edge across the smaller pill is the flat clip.
+        val pending = absorbTarget
+        if (pending != null && absorbLive && bubbleHeight.pos >= 1.0) {
+            val covered = bubbleLeft.pos >= left.pos - 1.5 && bubbleRight.pos <= right.pos + 1.5
+            val settled = !bubbleLeft.busy && !bubbleRight.busy && now >= absorbAt + 0.28
+            if (covered || settled) {
+                absorbTarget = null
+                bubbleHeight.aim(0.0, MotionSpec.tween(0.0), now)
+                val edge = motion(edgeSpring(Transition.SWAP))
+                val body = motion(bodySpring(Transition.SWAP))
+                val corner = motion(Spring(0.49, 0.826))
+                left.aim(pending.left, edge, now)
+                right.aim(pending.right, edge, now)
+                top.aim(pending.top, body, now)
+                height.aim(pending.height, body, now)
+                radius.aim(pending.radius, corner, now)
+            }
         }
         if (absorbLive && now > absorbAt + 0.7 && enterAlpha() > 0.98f && !left.busy && !right.busy && !height.busy && !radius.busy) {
             absorbLive = false
@@ -855,14 +871,9 @@ internal class IslandRig {
             if (via > 0) track.aim(to, retarget, now, via = idleTo, viaDelay = via, viaMotion = edge)
             else track.aim(to, edge, now)
         }
-        edgeAim(left, target.left, idle.left)
-        edgeAim(right, target.right, idle.right)
-        val bodyHold = if (reduced) 0.0 else if (absorbing) 0.222 else if (transition == Transition.SWAP) 0.223 else 0.0
-        top.aim(target.top, body, now, hold = bodyHold)
-        height.aim(target.height, body, now, hold = bodyHold)
-        val radiusHold = if (reduced) 0.0 else if (absorbing) 0.223 else cornerDelay(transition)
-        radius.aim(target.radius, corner, now, hold = radiusHold)
         if (absorbing) {
+            // Keep the attached pill where it is until the lobe is under it.
+            absorbTarget = target
             val restH = bubbleHeight.pos
             val grown = bubbleScale.pos
             if (grown > 1.001) {
@@ -876,6 +887,18 @@ internal class IslandRig {
             }
             bubbleLeft.aim(idle.right - restH, motion(Spring(0.25, 1.0)), now)
             bubbleRight.aim(idle.right, motion(Spring(0.42, 1.0)), now)
+        } else {
+            absorbTarget = null
+            edgeAim(left, target.left, idle.left)
+            edgeAim(right, target.right, idle.right)
+            val bodyHold = if (reduced) 0.0 else if (transition == Transition.SWAP) 0.223 else 0.0
+            top.aim(target.top, body, now, hold = bodyHold)
+            height.aim(target.height, body, now, hold = bodyHold)
+            val radiusHold = if (reduced) 0.0 else cornerDelay(transition)
+            radius.aim(target.radius, corner, now, hold = radiusHold)
+        }
+        if (absorbing) {
+            // The lobe slide was aimed above. Leave it there until it is under the bar.
         } else if (transition == Transition.SPLIT) {
             bubbleLeft.aim(target.bubbleLeft, motion(Spring(0.376, 0.811)), now, hold = if (reduced) 0.0 else 0.345)
             if (via > 0) bubbleRight.aim(target.bubbleRight, edge, now, via = idle.bubbleRight, viaDelay = via, viaMotion = edge)
@@ -1114,22 +1137,63 @@ private fun arcTo(path: Path, sx: Double, sy: Double, ex: Double, ey: Double, ra
     path.arcTo(oval, Math.toDegrees(start).toFloat(), Math.toDegrees(sweep).toFloat(), false)
 }
 
+/**
+ * Metaball neck between the facing caps, the islandcn bridge. Filled with both
+ * capsules it is one contour. Empty once the caps are farther than [maxGap],
+ * or once one cap sits inside the other.
+ */
 internal fun bridgeNeck(pill: DRect, bubble: DRect, maxGap: Double = 5.0): Path {
     val path = Path()
-    val gap = bubble.left - pill.right
-    if (gap > maxGap || pill.height < 2 || bubble.height < 2) return path
-    val t = (1 - (gap / maxGap)).coerceIn(0.0, 1.0)
-    val neck = min(pill.height, bubble.height) * t.pow(0.65)
-    val mid = (pill.centerY + bubble.centerY) / 2
-    val y0 = mid - neck / 2
-    val y1 = mid + neck / 2
-    val x0 = pill.right
-    val x1 = bubble.left
-    val pull = max(2.4, abs(x1 - x0) * 0.3 + 2.4)
-    path.moveTo(x0.toFloat(), y0.toFloat())
-    path.cubicTo((x0 + pull).toFloat(), y0.toFloat(), (x1 - pull).toFloat(), y0.toFloat(), x1.toFloat(), y0.toFloat())
-    path.lineTo(x1.toFloat(), y1.toFloat())
-    path.cubicTo((x1 - pull).toFloat(), y1.toFloat(), (x0 + pull).toFloat(), y1.toFloat(), x0.toFloat(), y1.toFloat())
+    if (pill.height < 2.0 || bubble.height < 2.0 || maxGap <= 0.0) return path
+    val left = if (pill.centerX <= bubble.centerX) pill else bubble
+    val right = if (pill.centerX <= bubble.centerX) bubble else pill
+    val ar = min(left.width, left.height) / 2.0
+    val br = min(right.width, right.height) / 2.0
+    if (ar <= 0.0 || br <= 0.0) return path
+    val ax = left.right - ar
+    val ay = left.centerY
+    val bx = right.left + br
+    val by = right.centerY
+    val dx = bx - ax
+    val dy = by - ay
+    val d = hypot(dx, dy)
+    if (d <= abs(ar - br) || d < 1e-4) return path
+    val gap = d - ar - br
+    if (gap >= maxGap) return path
+    val spread = 0.3
+    val handleSize = 2.4
+    val reach = max(0.0, gap) / maxGap
+    val v = spread * (1.0 - reach).pow(1.5)
+    if (v <= 1e-4) return path
+    var u1 = 0.0
+    var u2 = 0.0
+    if (d < ar + br) {
+        u1 = acos(((ar * ar + d * d - br * br) / (2 * ar * d)).coerceIn(-1.0, 1.0))
+        u2 = acos(((br * br + d * d - ar * ar) / (2 * br * d)).coerceIn(-1.0, 1.0))
+    }
+    val between = atan2(dy, dx)
+    val maxSpread = acos(((ar - br) / d).coerceIn(-1.0, 1.0))
+    val angle1 = between + u1 + (maxSpread - u1) * v
+    val angle2 = between - u1 - (maxSpread - u1) * v
+    val angle3 = between + PI - u2 - (PI - u2 - maxSpread) * v
+    val angle4 = between - PI + u2 + (PI - u2 - maxSpread) * v
+    fun polar(cx: Double, cy: Double, angle: Double, length: Double): Pair<Double, Double> =
+        (cx + length * cos(angle)) to (cy + length * sin(angle))
+    val p1 = polar(ax, ay, angle1, ar)
+    val p2 = polar(ax, ay, angle2, ar)
+    val p3 = polar(bx, by, angle3, br)
+    val p4 = polar(bx, by, angle4, br)
+    val total = ar + br
+    val span = hypot(p1.first - p3.first, p1.second - p3.second)
+    val handle = min(v * handleSize, if (total > 0.0) span / total else 0.0) * min(1.0, (d * 2) / total)
+    val h1 = polar(p1.first, p1.second, angle1 - PI / 2, ar * handle)
+    val h2 = polar(p2.first, p2.second, angle2 + PI / 2, ar * handle)
+    val h3 = polar(p3.first, p3.second, angle3 + PI / 2, br * handle)
+    val h4 = polar(p4.first, p4.second, angle4 - PI / 2, br * handle)
+    path.moveTo(p1.first.toFloat(), p1.second.toFloat())
+    path.cubicTo(h1.first.toFloat(), h1.second.toFloat(), h3.first.toFloat(), h3.second.toFloat(), p3.first.toFloat(), p3.second.toFloat())
+    path.lineTo(p4.first.toFloat(), p4.second.toFloat())
+    path.cubicTo(h4.first.toFloat(), h4.second.toFloat(), h2.first.toFloat(), h2.second.toFloat(), p2.first.toFloat(), p2.second.toFloat())
     path.close()
     return path
 }
