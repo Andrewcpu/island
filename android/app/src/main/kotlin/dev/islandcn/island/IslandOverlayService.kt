@@ -153,6 +153,26 @@ class IslandOverlayService : Service() {
         view.post { alignBand() }
     }
 
+    /** Put the pill back. A band layout pass must not leave the island shifted or resized. */
+    private fun restorePill() {
+        val view = root ?: return
+        val manager = window ?: return
+        if (appliedW < 1 || appliedH < 1) return
+        val params = view.layoutParams as? WindowManager.LayoutParams ?: return
+        val centered = (view as? IslandPillView)?.screenPx ?: 0 > 0
+        params.gravity = if (centered) Gravity.TOP or Gravity.CENTER_HORIZONTAL else Gravity.TOP or Gravity.LEFT
+        params.x = appliedX
+        params.y = appliedY
+        params.width = appliedW
+        params.height = appliedH
+        params.disableMoveAnimation()
+        try {
+            manager.updateViewLayout(view, params)
+        } catch (error: Exception) {
+            Log.w(TAG, "Island restore failed", error)
+        }
+    }
+
     private fun bandParams(width: Int, height: Int): WindowManager.LayoutParams {
         return WindowManager.LayoutParams(
             width,
@@ -196,6 +216,7 @@ class IslandOverlayService : Service() {
         } catch (error: Exception) {
             Log.w(TAG, "Status band align failed", error)
         }
+        restorePill()
     }
 
     private fun showStatus(frame: IslandStatusStack.Frame?) {
@@ -208,12 +229,14 @@ class IslandOverlayService : Service() {
         if (params.width == frame.widthPx && params.height == frame.statusPx) return
         params.width = frame.widthPx.coerceAtLeast(1)
         params.height = frame.statusPx.coerceAtLeast(1)
+        params.gravity = Gravity.TOP or Gravity.LEFT
         params.disableMoveAnimation()
         try {
             window?.updateViewLayout(view, params)
         } catch (error: Exception) {
             Log.w(TAG, "Status band resize failed", error)
         }
+        restorePill()
     }
 
     fun applyMedia(track: IslandMedia.Track?) {

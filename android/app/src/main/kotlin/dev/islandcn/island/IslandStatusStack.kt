@@ -203,7 +203,7 @@ internal object IslandStatusStack {
                 finish(null, looked = true)
                 return
             }
-            compose(shot, shotApp, shotWin, island, screen.first, status)
+            compose(shot, shotApp, shotWin, island, screen.first, screen.second, status)
         }
         fun shootApps(index: Int) {
             if (index >= apps.size) {
@@ -216,7 +216,7 @@ internal object IslandStatusStack {
             try {
                 shootWindow(host, win.id) { bmp ->
                     main.post {
-                        if (bmp != null && coversBand(win, bmp, screen.first, status)) {
+                        if (bmp != null && coversBand(win, bmp, screen.first, screen.second, status)) {
                             appBmp = bmp
                             appWin = win
                             appDone = true
@@ -271,6 +271,7 @@ internal object IslandStatusStack {
         app: Win?,
         island: Rect?,
         screenW: Int,
+        screenH: Int,
         status: Int,
     ) {
         work.execute {
@@ -285,7 +286,7 @@ internal object IslandStatusStack {
                 var reason = if (app == null) "no app window" else "app screenshot missing"
                 if (appBmp != null && app != null) {
                     val appBand = strip(screenW, status)
-                    if (placeAppBand(appBand, appBmp, app.bounds, status)) {
+                    if (placeAppBand(appBand, appBmp, app.bounds, status, screenH)) {
                         plate = appBand
                         // The island is in the display shot. Match the plate there so it is not content.
                         copyRect(displayBand, appBand, island)
@@ -457,12 +458,34 @@ internal object IslandStatusStack {
         return out
     }
 
-    /** App-window pixels in the status-bar rect, made opaque so they cover the real status bar. */
-    private fun placeAppBand(dest: Bitmap, src: Bitmap, bounds: Rect, status: Int): Boolean {
-        blit(dest, src, bounds, status)
+    /**
+     * App-window pixels that already sit in the status-bar rect. A screen-sized buffer
+     * contributes its top rows. A window that only starts below the bar contributes nothing.
+     */
+    private fun placeAppBand(dest: Bitmap, src: Bitmap, bounds: Rect, status: Int, screenH: Int): Boolean {
+        val paint = Paint()
+        paint.isFilterBitmap = false
+        val screenW = dest.width
+        if (fullScreenBuffer(src, screenW, screenH, status) && bounds.width() >= screenW / 2) {
+            val srcH = (status.toFloat() / screenW.coerceAtLeast(1) * src.width).toInt().coerceIn(1, src.height)
+            Canvas(dest).drawBitmap(src, Rect(0, 0, src.width, srcH), Rect(0, 0, screenW, dest.height), paint)
+        } else if (bounds.top < status) {
+            blit(dest, src, bounds, status)
+        } else {
+            return false
+        }
         solidify(dest)
         val area = dest.width * dest.height
-        return area > 0 && covered(dest) * 2 >= area
+        return area > 0 && covered(dest) * 4 >= area
+    }
+
+    /** Buffer matches the screen, so its top rows are the status bar, not content from below it. */
+    private fun fullScreenBuffer(src: Bitmap, screenW: Int, screenH: Int, status: Int): Boolean {
+        if (screenW < 2 || screenH <= status || src.width < screenW / 2 || src.height < 2) return false
+        val scale = src.width.toFloat() / screenW
+        val full = screenH * scale
+        val inset = (screenH - status) * scale
+        return abs(src.height - full) + 1f < abs(src.height - inset)
     }
 
     private fun covered(bitmap: Bitmap): Int {
@@ -531,11 +554,11 @@ internal object IslandStatusStack {
     }
 
     /** True when this shot's own status-bar pixels cover the band. A lower row is not stretched up. */
-    private fun coversBand(win: Win, bmp: Bitmap, screenW: Int, status: Int): Boolean {
+    private fun coversBand(win: Win, bmp: Bitmap, screenW: Int, screenH: Int, status: Int): Boolean {
         if (screenW < 2 || status < 2 || bmp.width < 2 || bmp.height < 2) return false
-        if (win.bounds.top > status / 2 || win.bounds.width() < screenW / 2) return false
+        if (win.bounds.width() < screenW / 2) return false
         val probe = strip(screenW, status)
-        val ok = placeAppBand(probe, bmp, win.bounds, status)
+        val ok = placeAppBand(probe, bmp, win.bounds, status, screenH)
         probe.recycle()
         return ok
     }

@@ -1316,28 +1316,14 @@ class IslandPillView(context: Context) : View(context) {
         val top = floor(cover.top * density).toInt()
         val bottom = ceil(cover.bottom * density).toInt()
         val height = (bottom - top).coerceAtLeast(1)
-        val left: Int
-        val width: Int
-        val leftExtent = rig.centerX - cover.left
-        val rightExtent = cover.right - rig.centerX
-        // A longer left ear (lock, torch, missed call) used to publish an exact
-        // rect whose x had to slide left of the camera. On the hugged capsule that
-        // slide leaves the window's left edge on the camera, so the left ear is
-        // cut flat and only the right semicircle remains. Center on the camera and
-        // cover the longer ear on both sides. The drawn pill stays the tight one.
-        val symmetric = abs(rightExtent - leftExtent) <= 1.0 || leftExtent > rightExtent + 1.0
-        if (!symmetric) {
-            left = floor(cover.left * density).toInt()
-            val right = ceil(cover.right * density).toInt()
-            width = (right - left).coerceAtLeast(1)
-        } else {
-            val camX = Math.round(rig.centerX * density).toInt()
-            val halfW = ceil(max(camX - cover.left * density, cover.right * density - camX)).toInt().coerceAtLeast(1)
-            left = camX - halfW
-            width = halfW * 2
-        }
-        cameraPx = Math.round(rig.centerX * density).toInt()
-        windowCentered = symmetric
+        // Always centered on the camera, wide enough for the longer ear on both
+        // sides. An asymmetric window left one ear on the clip edge.
+        val camX = Math.round(rig.centerX * density).toInt()
+        val halfW = ceil(max(camX - cover.left * density, cover.right * density - camX)).toInt().coerceAtLeast(1)
+        val left = camX - halfW
+        val width = halfW * 2
+        cameraPx = camX
+        windowCentered = true
         originX = left
         originY = top
         if (left == appliedL && top == appliedT && width == appliedW && height == appliedH) return
