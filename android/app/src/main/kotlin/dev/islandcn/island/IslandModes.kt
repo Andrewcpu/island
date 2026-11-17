@@ -423,12 +423,17 @@ internal object IslandModes {
         val remainingLabel = remaining.ifEmpty { "−0:00" }
         canvas.drawText(elapsedLabel, (pill.left + 22.4).toFloat(), (barTop + 4).toFloat(), small)
         val bar = RectF((pill.left + 55.4).toFloat(), (barTop - 3).toFloat(), (pill.right - 60).toFloat(), (barTop + 3).toFloat())
-        fill.color = 0x33FFFFFF
+        val radius = bar.height() / 2f
+        fill.shader = null
+        fill.color = 0xFF3A3A3C.toInt()
         fill.alpha = alpha
-        canvas.drawRect(bar, fill)
-        bar.right = bar.left + bar.width() * fraction.coerceIn(0f, 1f)
-        fill.color = Color.WHITE
-        canvas.drawRect(bar, fill)
+        canvas.drawRoundRect(bar, radius, radius, fill)
+        val played = fraction.coerceIn(0f, 1f)
+        if (played > 0f) {
+            val head = RectF(bar.left, bar.top, bar.left + bar.width() * played, bar.bottom)
+            fill.color = 0xFFD1D1D6.toInt()
+            canvas.drawRoundRect(head, radius, radius, fill)
+        }
         canvas.drawText(remainingLabel, (pill.right - 24 - small.measureText(remainingLabel)).toFloat(), (barTop + 4).toFloat(), small)
         val buttonY = pill.top + 142
         hits.toggle = DRect(pill.centerX - 18, buttonY - 18, pill.centerX + 18, buttonY + 18)
