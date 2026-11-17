@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
 import android.accessibilityservice.AccessibilityService
 import androidx.core.app.NotificationCompat
@@ -178,6 +179,29 @@ class IslandOverlayService : Service() {
                 setFitInsetsIgnoringVisibility(true)
             }
             disableMoveAnimation()
+        }
+    }
+
+    /** Hide both overlays so a display screenshot is the status bar without the island. */
+    fun concealForCapture(hidden: Boolean) {
+        val visibility = if (hidden) View.INVISIBLE else View.VISIBLE
+        val alpha = if (hidden) 0f else 1f
+        concealView(root, visibility, alpha)
+        concealView(band, visibility, alpha)
+        if (!hidden) band?.invalidate()
+    }
+
+    private fun concealView(view: View?, visibility: Int, alpha: Float) {
+        val target = view ?: return
+        target.visibility = visibility
+        val params = target.layoutParams as? WindowManager.LayoutParams ?: return
+        if (params.alpha == alpha) return
+        params.alpha = alpha
+        params.disableMoveAnimation()
+        try {
+            window?.updateViewLayout(target, params)
+        } catch (error: Exception) {
+            Log.w(TAG, "Status capture conceal failed", error)
         }
     }
 
@@ -415,7 +439,9 @@ class IslandOverlayService : Service() {
             if (open || strip.drawn) strip.invalidate()
         }
 
-        internal fun islandBandRect(): android.graphics.Rect? = instance?.pill?.islandScreenRect()
+        internal fun conceal(hidden: Boolean) {
+            instance?.concealForCapture(hidden)
+        }
 
         fun onKeyguard(showing: Boolean, deviceLocked: Boolean) {
             instance?.pill?.onKeyguard(showing, deviceLocked)

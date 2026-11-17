@@ -14,13 +14,13 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.Choreographer
 import android.view.Display
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -51,6 +51,7 @@ internal object IslandStatusStack {
     private var registered = false
     private var frame: Frame? = null
     private var loggedShot = false
+    private var suppressUntil = 0L
 
     private val capture = Runnable { start() }
 
@@ -98,6 +99,7 @@ internal object IslandStatusStack {
     }
 
     fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (SystemClock.uptimeMillis() < suppressUntil) return
         val type = event?.eventType ?: return
         if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED || type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             schedule(500)
@@ -127,6 +129,7 @@ internal object IslandStatusStack {
         main.postDelayed({
             if (inflight && lastStart == token) {
                 Log.w(TAG, "Status stack capture timed out")
+                reveal()
                 inflight = false
                 if (pending) {
                     pending = false
@@ -140,27 +143,57 @@ internal object IslandStatusStack {
             finish(null, looked = true)
             return
         }
-        val island = IslandOverlayService.islandBandRect()
         val app = pickApp(snapshot(host))
-        val waiting = AtomicInteger(if (app != null && Build.VERSION.SDK_INT >= 34) 2 else 1)
-        var displayBmp: Bitmap? = null
-        var appBmp: Bitmap? = null
-        val gate = Any()
-        fun arrive(display: Boolean, bmp: Bitmap?) {
-            val pair = synchronized(gate) {
-                if (display) displayBmp = bmp else appBmp = bmp
-                if (waiting.decrementAndGet() != 0) null else displayBmp to appBmp
-            } ?: return
-            val (shot, appShot) = pair
-            if (shot == null) {
-                appShot?.recycle()
-                main.post { finish(null, looked = true) }
-                return
+        // The display shot includes this overlay. Hide the island and the strip, then capture.
+        suppressUntil = Long.MAX_VALUE
+        IslandOverlayService.conceal(true)
+        val frames = Choreographer.getInstance()
+        frames.postFrameCallback {
+            frames.postFrameCallback {
+                if (service == null || !inflight) {
+                    reveal()
+                    return@postFrameCallback
+                }
+                val waiting = AtomicInteger(if (app != null && Build.VERSION.SDK_INT >= 34) 2 else 1)
+                var displayBmp: Bitmap? = null
+                var appBmp: Bitmap? = null
+                val gate = Any()
+                var revealed = false
+                fun shown() {
+                    if (revealed) return
+                    revealed = true
+                    reveal()
+                }
+                fun arrive(display: Boolean, bmp: Bitmap?) {
+                    if (display) shown()
+                    val pair = synchronized(gate) {
+                        if (display) displayBmp = bmp else appBmp = bmp
+                        if (waiting.decrementAndGet() != 0) null else displayBmp to appBmp
+                    } ?: return
+                    val (shot, appShot) = pair
+                    if (shot == null) {
+                        appShot?.recycle()
+                        main.post { finish(null, looked = true) }
+                        return
+                    }
+                    compose(shot, appShot, app, screen.first, status)
+                }
+                try {
+                    shootDisplay(host) { arrive(true, it) }
+                    if (app != null && Build.VERSION.SDK_INT >= 34) shootWindow(host, app.id) { arrive(false, it) }
+                } catch (error: Exception) {
+                    Log.w(TAG, "Status capture failed to start", error)
+                    shown()
+                    main.post { finish(null, looked = true) }
+                }
             }
-            compose(shot, appShot, app, screen.first, status, island)
         }
-        shootDisplay(host) { arrive(true, it) }
-        if (app != null && Build.VERSION.SDK_INT >= 34) shootWindow(host, app.id) { arrive(false, it) }
+    }
+
+    /** Show the island again. A capture must not leave it hidden. */
+    private fun reveal() {
+        suppressUntil = SystemClock.uptimeMillis() + 800L
+        main.post { IslandOverlayService.conceal(false) }
     }
 
     private fun compose(
@@ -169,40 +202,28 @@ internal object IslandStatusStack {
         app: Win?,
         screenW: Int,
         status: Int,
-        island: Rect?,
     ) {
         work.execute {
             var built: Frame? = null
-            var samples = 0
             try {
-                val under = strip(screenW, status)
-                // Content just under the bar, so a gap left by the slide is not the real status bar.
+                // The status-bar crop itself, fully opaque. A difference mask over a
+                // dark under-layer is what dimmed the halves.
+                val bar = cropTop(display, screenW, status)
+                forceOpaque(bar)
+                // Gap fill only. It is not drawn under the halves.
+                val gap = strip(screenW, status)
                 val below = (status.toFloat() / screenW.coerceAtLeast(1) * display.width).toInt().coerceIn(0, display.height - 1)
-                Canvas(under).drawBitmap(
+                Canvas(gap).drawBitmap(
                     display,
                     Rect(0, below, display.width, below + 1),
                     Rect(0, 0, screenW, status),
                     null,
                 )
-                if (appBmp != null && app != null) blit(under, appBmp, app.bounds, status)
-                val full = cropTop(display, screenW, status)
-                punch(full, under, island)
-                val mask = difference(under, full)
-                full.recycle()
-                samples = maskSamples(mask)
-                if (samples == 0) {
-                    under.recycle()
-                    mask.recycle()
-                    if (!loggedShot) {
-                        loggedShot = true
-                        Log.e(TAG, "Status strip invisible: display band matched the app, mask empty")
-                    }
-                } else {
-                    built = Frame(under, mask, screenW, status)
-                    if (!loggedShot) {
-                        loggedShot = true
-                        Log.i(TAG, "Status strip from display screenshot, maskSamples=$samples (per-window shots omit the status bar)")
-                    }
+                if (appBmp != null && app != null) blit(gap, appBmp, app.bounds, status)
+                built = Frame(gap, bar, screenW, status)
+                if (!loggedShot) {
+                    loggedShot = true
+                    Log.i(TAG, "Status strip from display screenshot with overlays hidden")
                 }
             } catch (error: Exception) {
                 Log.w(TAG, "Status stack compose failed", error)
@@ -210,13 +231,7 @@ internal object IslandStatusStack {
             display.recycle()
             appBmp?.recycle()
             val frame = built
-            main.post {
-                if (statusBarWindowReachable != false) {
-                    statusBarWindowReachable = false
-                    Log.i(TAG, "Status bar window is not the mask source; display screenshot is")
-                }
-                finish(frame, looked = true)
-            }
+            main.post { finish(frame, looked = true) }
         }
     }
 
@@ -343,55 +358,14 @@ internal object IslandStatusStack {
         canvas.drawBitmap(src, srcRect, dst, null)
     }
 
-    /** The island is in the display shot. Copy the under-layer there so it is not part of the mask. */
-    private fun punch(full: Bitmap, under: Bitmap, island: Rect?) {
-        val hole = island ?: return
-        val dst = Rect(hole)
-        if (!dst.intersect(0, 0, min(full.width, under.width), min(full.height, under.height))) return
-        if (dst.width() < 1 || dst.height() < 1) return
-        val pixels = IntArray(dst.width() * dst.height())
-        under.getPixels(pixels, 0, dst.width(), dst.left, dst.top, dst.width(), dst.height())
-        full.setPixels(pixels, 0, dst.width(), dst.left, dst.top, dst.width(), dst.height())
-    }
-
-    /** Pixels that differ are the status bar. The mask keeps the composited pixel there. */
-    private fun difference(windowStrip: Bitmap, full: Bitmap): Bitmap {
-        val width = min(windowStrip.width, full.width)
-        val height = min(windowStrip.height, full.height)
-        val mask = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val appPx = IntArray(width * height)
-        val fullPx = IntArray(width * height)
-        val out = IntArray(width * height)
-        windowStrip.getPixels(appPx, 0, width, 0, 0, width, height)
-        full.getPixels(fullPx, 0, width, 0, 0, width, height)
-        for (i in out.indices) {
-            out[i] = if (differs(appPx[i], fullPx[i])) fullPx[i] else 0
-        }
-        mask.setPixels(out, 0, width, 0, 0, width, height)
-        return mask
-    }
-
-    private fun differs(a: Int, b: Int): Boolean {
-        if (abs((a ushr 24) - (b ushr 24)) > 12) return true
-        if (abs(((a shr 16) and 0xFF) - ((b shr 16) and 0xFF)) > 12) return true
-        if (abs(((a shr 8) and 0xFF) - ((b shr 8) and 0xFF)) > 12) return true
-        return abs((a and 0xFF) - (b and 0xFF)) > 12
-    }
-
-    private fun maskSamples(mask: Bitmap): Int {
-        var count = 0
-        val row = IntArray(mask.width)
-        var y = 0
-        while (y < mask.height) {
-            mask.getPixels(row, 0, mask.width, 0, y, mask.width, 1)
-            var x = 0
-            while (x < row.size) {
-                if ((row[x] ushr 24) > 16) count++
-                x += 8
-            }
-            y += 8
-        }
-        return count
+    /** Screenshot pixels stay the status bar's own color. No scrim alpha to blend with a layer underneath. */
+    private fun forceOpaque(bitmap: Bitmap) {
+        val count = bitmap.width * bitmap.height
+        if (count < 1) return
+        val pixels = IntArray(count)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        for (i in pixels.indices) pixels[i] = pixels[i] or 0xFF000000.toInt()
+        bitmap.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
     }
 
     private fun snapshot(host: AccessibilityService): List<Win> {

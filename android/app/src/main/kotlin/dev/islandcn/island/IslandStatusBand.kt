@@ -19,7 +19,7 @@ internal class IslandStatusBand(context: Context) : View(context) {
     var pill: IslandPillView? = null
     var drawn = false
         private set
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val paint = Paint()
     private var strip: Bitmap? = null
     private var leftHalf: Bitmap? = null
     private var rightHalf: Bitmap? = null
@@ -53,13 +53,24 @@ internal class IslandStatusBand(context: Context) : View(context) {
         val base = strip
         val left = leftHalf
         val right = rightHalf
-        val show = spread > 0.002f && base != null && left != null && right != null &&
-            !base.isRecycled && !left.isRecycled && !right.isRecycled
+        val show = spread > 0.002f && left != null && right != null &&
+            !left.isRecycled && !right.isRecycled
         drawn = show
-        if (!show || base == null || left == null || right == null) return
-        canvas.drawBitmap(base, 0f, 0f, paint)
-        canvas.drawBitmap(left, -spread * left.width, 0f, paint)
-        canvas.drawBitmap(right, left.width + spread * right.width, 0f, paint)
+        if (!show || left == null || right == null) return
+        val shiftLeft = spread * left.width
+        val shiftRight = spread * right.width
+        // App content only in the opening. Nothing is drawn under the halves.
+        val openLeft = left.width - shiftLeft
+        val openRight = left.width + shiftRight
+        if (base != null && !base.isRecycled && openRight > openLeft + 0.5f) {
+            canvas.save()
+            canvas.clipRect(openLeft, 0f, openRight, height.toFloat())
+            canvas.drawBitmap(base, 0f, 0f, paint)
+            canvas.restore()
+        }
+        paint.alpha = 255
+        canvas.drawBitmap(left, -shiftLeft, 0f, paint)
+        canvas.drawBitmap(right, left.width + shiftRight, 0f, paint)
     }
 
     private fun splitAt(width: Int): Int {

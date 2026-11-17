@@ -103,18 +103,6 @@ class IslandPillView(context: Context) : View(context) {
     /** 0 while collapsed, 1 at the expanded width. The status-bar halves follow this. */
     internal fun barSpread(): Float = rig.barSpread().toFloat()
 
-    /** Screen pixels of the live pill, padded so its edge is not part of the sliding mask. */
-    internal fun islandScreenRect(): android.graphics.Rect {
-        val bounds = rig.pill
-        val pad = (10f * density).toInt()
-        return android.graphics.Rect(
-            (bounds.left * density).toInt() - pad,
-            (bounds.top * density).toInt() - pad,
-            (bounds.right * density).toInt() + pad,
-            (bounds.bottom * density).toInt() + pad,
-        )
-    }
-
     private val keyline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 1.5f
