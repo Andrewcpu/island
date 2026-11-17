@@ -1072,8 +1072,9 @@ internal object IslandModes {
     }
 
     /**
-     * Closed at 0, open at 1. The shackle is one rigid U. Its left end stays in the
-     * body and is the only pivot; the right leg rides that rotation onto the left.
+     * Closed at 0, open at 1. Same white body and stroke as the locked glyph.
+     * The left leg stays in the body. The right leg lifts straight up and stops
+     * above the body, still on the right, with a gap under the free end.
      */
     private fun padlockIn(canvas: Canvas, rect: DRect, open: Float, alpha: Int) {
         val s = min(rect.width, rect.height).toFloat() * 0.34f
@@ -1088,23 +1089,22 @@ internal object IslandModes {
         stroke.strokeWidth = (s * 0.16f).coerceAtLeast(1.4f)
         stroke.strokeCap = Paint.Cap.ROUND
         stroke.strokeJoin = Paint.Join.ROUND
-        val spin = smoothStep(open.coerceIn(0f, 1f))
-        val px = cx - s * 0.46f
-        val py = cy + s * 0.18f
-        val shoulder = -s * 0.70f
+        val lift = smoothStep(open.coerceIn(0f, 1f))
+        val bodyTop = cy - s * 0.15f
+        val leftX = cx - s * 0.46f
+        val rightX = cx + s * 0.46f
+        val shoulder = cy - s * 0.62f
         val radius = s * 0.46f
-        val foot = -s * 0.16f
+        val buried = cy + s * 0.18f
+        val raised = bodyTop - s * 0.22f
+        val rightFoot = buried + (raised - buried) * lift
         val shackle = Path()
-        shackle.moveTo(0f, 0f)
-        shackle.lineTo(0f, shoulder)
-        shackle.arcTo(RectF(0f, shoulder - radius, radius * 2f, shoulder + radius), 180f, 180f, false)
-        shackle.lineTo(radius * 2f, foot)
-        canvas.save()
-        canvas.translate(px, py)
-        canvas.rotate(-130f * spin)
+        shackle.moveTo(leftX, buried)
+        shackle.lineTo(leftX, shoulder)
+        shackle.arcTo(RectF(leftX, shoulder - radius, rightX, shoulder + radius), 180f, 180f, false)
+        shackle.lineTo(rightX, rightFoot)
         canvas.drawPath(shackle, stroke)
-        canvas.restore()
-        canvas.drawRoundRect(RectF(cx - s * 0.72f, cy - s * 0.15f, cx + s * 0.72f, cy + s * 0.95f), s * 0.22f, s * 0.22f, fill)
+        canvas.drawRoundRect(RectF(cx - s * 0.72f, bodyTop, cx + s * 0.72f, cy + s * 0.95f), s * 0.22f, s * 0.22f, fill)
     }
 
     private fun smoothStep(amount: Float): Float {
