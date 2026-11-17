@@ -77,7 +77,12 @@ class IslandOverlayService : Service() {
     }
 
     private fun present(context: Context, type: Int) {
-        if (root != null && windowType == type) return
+        if (root != null && windowType == type) {
+            val manager = window
+            val view = root
+            if (manager != null && view != null && band?.parent == null) addBand(manager, view)
+            return
+        }
         windowType = type
         hostContext = context
         removeWindow()
@@ -382,6 +387,7 @@ class IslandOverlayService : Service() {
 
         @Volatile var instance: IslandOverlayService? = null
         @Volatile var useMic: Boolean = false
+        private var bandMissingLogged = false
 
         /**
          * Apply the border and halo. A rising edge, borderless to bordered, peeks.
@@ -397,10 +403,19 @@ class IslandOverlayService : Service() {
 
         fun syncStatusBand() {
             val host = instance ?: return
-            val strip = host.band ?: return
+            val strip = host.band
             val open = (host.pill?.barSpread() ?: 0f) > 0.002f
+            if (strip == null || strip.parent == null) {
+                if (open && !bandMissingLogged) {
+                    bandMissingLogged = true
+                    Log.e(TAG, "Status strip invisible: band window is not added")
+                }
+                return
+            }
             if (open || strip.drawn) strip.invalidate()
         }
+
+        internal fun islandBandRect(): android.graphics.Rect? = instance?.pill?.islandScreenRect()
 
         fun onKeyguard(showing: Boolean, deviceLocked: Boolean) {
             instance?.pill?.onKeyguard(showing, deviceLocked)
