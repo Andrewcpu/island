@@ -17,6 +17,8 @@ import android.graphics.drawable.Drawable
 import androidx.core.content.ContextCompat
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -1073,9 +1075,9 @@ internal object IslandModes {
     }
 
     /**
-     * Closed at 0, open at 1. Same white body and stroke as the locked glyph.
-     * The left leg stays in the body. The right leg lifts straight up and stops
-     * above the body, still on the right, with a gap under the free end.
+     * Closed at 0, open at 1. Filled body, no keyhole. The seated leg stays put.
+     * The free end travels up and around to the left until the shackle is swung
+     * over that side, matching the open padlock.
      */
     private fun padlockIn(canvas: Canvas, rect: DRect, open: Float, alpha: Int) {
         val s = min(rect.width, rect.height).toFloat() * 0.34f
@@ -1087,27 +1089,62 @@ internal object IslandModes {
         fill.alpha = alpha
         stroke.color = Color.WHITE
         stroke.alpha = alpha
-        stroke.strokeWidth = (s * 0.16f).coerceAtLeast(1.4f)
+        stroke.strokeWidth = (s * 0.26f).coerceAtLeast(1.6f)
         stroke.strokeCap = Paint.Cap.ROUND
         stroke.strokeJoin = Paint.Join.ROUND
-        val lift = smoothStep(open.coerceIn(0f, 1f))
-        val bodyTop = cy - s * 0.15f
-        val leftX = cx - s * 0.46f
-        val rightX = cx + s * 0.46f
-        // The arch grows taller as the right leg rises, so the open gap is obvious.
-        // The left foot stays buried. The free end stays on the right.
-        val shoulder = cy - s * (0.62f + 0.36f * lift)
-        val radius = s * 0.46f
-        val buried = cy + s * 0.18f
-        val openFoot = min(bodyTop - s * 0.84f, shoulder - s * 0.04f)
-        val rightFoot = buried + (openFoot - buried) * lift
-        val shackle = Path()
-        shackle.moveTo(leftX, buried)
-        shackle.lineTo(leftX, shoulder)
-        shackle.arcTo(RectF(leftX, shoulder - radius, rightX, shoulder + radius), 180f, 180f, false)
-        shackle.lineTo(rightX, rightFoot)
-        canvas.drawPath(shackle, stroke)
-        canvas.drawRoundRect(RectF(cx - s * 0.72f, bodyTop, cx + s * 0.72f, cy + s * 0.95f), s * 0.22f, s * 0.22f, fill)
+        val t = smoothStep(open.coerceIn(0f, 1f))
+        val bw = s * 1.35f
+        val bh = s * 1.02f
+        val top = cy - bh * 0.32f
+        val body = RectF(cx - bw / 2f, top, cx + bw / 2f, top + bh)
+        val px = body.left + bw * 0.34f
+        val py = top - s * 0.58f
+        val seat = top + s * 0.28f
+        val radius = s * 0.40f
+        val phi = (-PI * t).toFloat()
+        val fsx = px + 2f * radius * cos(phi)
+        val fsy = py + 2f * radius * sin(phi)
+        val mx = (px + fsx) / 2f
+        val my = (py + fsy) / 2f
+        val aP = atan2(py - my, px - mx)
+        val sweep = upperSweep(mx, my, radius, aP)
+        val path = Path()
+        path.moveTo(px, seat)
+        path.lineTo(px, py)
+        val steps = 24
+        for (i in 0..steps) {
+            val a = aP + sweep * (i / steps.toFloat())
+            path.lineTo(mx + radius * cos(a), my + radius * sin(a))
+        }
+        val endA = aP + sweep
+        var tangX = -sin(endA)
+        var tangY = cos(endA)
+        if (sweep < 0f) {
+            tangX = -tangX
+            tangY = -tangY
+        }
+        val leg = s * (0.78f * (1f - t) + 0.50f * t)
+        path.lineTo(fsx + tangX * leg, fsy + tangY * leg)
+        canvas.drawPath(path, stroke)
+        canvas.drawRoundRect(body, s * 0.22f, s * 0.22f, fill)
+    }
+
+    /** Semicircle that bulges upward, away from the lock body. */
+    private fun upperSweep(mx: Float, my: Float, radius: Float, aP: Float): Float {
+        var bestY = Float.POSITIVE_INFINITY
+        var bestX = Float.POSITIVE_INFINITY
+        var best = PI.toFloat()
+        for (sweep in floatArrayOf(PI.toFloat(), -PI.toFloat())) {
+            val am = aP + sweep / 2f
+            val y = my + radius * sin(am)
+            val x = mx + radius * cos(am)
+            if (y < bestY - 0.01f || (abs(y - bestY) <= 0.01f && x < bestX)) {
+                bestY = y
+                bestX = x
+                best = sweep
+            }
+        }
+        return best
     }
 
     private fun smoothStep(amount: Float): Float {
