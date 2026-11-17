@@ -11,9 +11,10 @@ import android.view.View
 /**
  * Full-width status-bar strip under the island. It does not take touches.
  * Collapsed, it draws nothing, so the real status bar shows through.
- * While the pill's width spring is open, the mask is two halves split at the
- * camera: the left half slides off the left edge and the right half off the
- * right edge, by the same spread as that spring. Collapse runs it backwards.
+ * While the pill's width spring is open, the difference mask is two halves split
+ * at the camera: the left half slides off the left edge and the right half off
+ * the right edge, by the same spread as that spring. Collapse runs it backwards.
+ * The app-window band stays put, so wallpaper and the app do not travel with the clock.
  */
 internal class IslandStatusBand(context: Context) : View(context) {
     var pill: IslandPillView? = null
@@ -59,16 +60,11 @@ internal class IslandStatusBand(context: Context) : View(context) {
         if (!show || left == null || right == null) return
         val shiftLeft = spread * left.width
         val shiftRight = spread * right.width
-        // App content only in the opening. Nothing is drawn under the halves.
-        val openLeft = left.width - shiftLeft
-        val openRight = left.width + shiftRight
-        if (base != null && !base.isRecycled && openRight > openLeft + 0.5f) {
-            canvas.save()
-            canvas.clipRect(openLeft, 0f, openRight, height.toFloat())
-            canvas.drawBitmap(base, 0f, 0f, paint)
-            canvas.restore()
-        }
         paint.alpha = 255
+        paint.isFilterBitmap = false
+        // Still app pixels cover the real status bar. The halves are opaque where they
+        // differ, so this plate does not tint them. Matching pixels stay transparent.
+        if (base != null && !base.isRecycled) canvas.drawBitmap(base, 0f, 0f, paint)
         canvas.drawBitmap(left, -shiftLeft, 0f, paint)
         canvas.drawBitmap(right, left.width + shiftRight, 0f, paint)
     }
