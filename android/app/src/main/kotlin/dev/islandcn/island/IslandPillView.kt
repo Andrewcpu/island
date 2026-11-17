@@ -125,8 +125,10 @@ class IslandPillView(context: Context) : View(context) {
         }
         publish()
         invalidate()
+        val sliding = barSpread() > 0.002f || rig.expanded
+        IslandStatusStack.tick(sliding)
         IslandOverlayService.syncStatusBand()
-        if (rig.animating || ticking() || wakeUntil > SystemClock.elapsedRealtime()) kick()
+        if (rig.animating || ticking() || sliding || wakeUntil > SystemClock.elapsedRealtime()) kick()
     }
 
     init {

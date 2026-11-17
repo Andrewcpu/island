@@ -264,10 +264,6 @@ internal class IslandRig {
     private var absorbTarget: Shape? = null
     private var bubbleCutAt = -1.0
     private var wakeGen = 0
-    /** Holds the collapsed shape until this expand's screenshots exist. */
-    private var holdExpand = false
-    private var releaseExpand = false
-    private var expandToken = 0
 
     /**
      * 0 at the collapsed width, 1 at the expanded width. This is the live edge spring,
@@ -780,27 +776,6 @@ internal class IslandRig {
     private fun retarget(resize: Boolean = false, alertReturn: Boolean = false, swelling: Boolean = false) {
         val next = desired()
         val from = kind
-        val opening = next == Kind.EXPANDED && from != Kind.EXPANDED
-        if (!opening && next != Kind.EXPANDED) {
-            expandToken++
-            holdExpand = false
-        }
-        if (opening && !releaseExpand) {
-            if (!holdExpand) {
-                holdExpand = true
-                val token = ++expandToken
-                IslandStatusStack.captureBeforeDraw {
-                    if (token != expandToken) return@captureBeforeDraw
-                    holdExpand = false
-                    if (desired() == Kind.EXPANDED && kind != Kind.EXPANDED) {
-                        releaseExpand = true
-                        retarget(resize, alertReturn, swelling)
-                        releaseExpand = false
-                    }
-                }
-            }
-            return
-        }
         val swap = next == Kind.EXPANDED && from == Kind.MINIMAL
         val transition = if (from == next && resize) Transition.RESIZE else transition(from, next, swap, swelling, alertReturn)
         val measure = measure()
