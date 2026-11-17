@@ -70,7 +70,7 @@ Denial leaves the rest of the app usable. Each live row explains the fallback.
 | `MODIFY_AUDIO_SETTINGS` | Speaker route for the player. |
 | `POST_NOTIFICATIONS` | The one foreground-service notice Android requires. It is silent, minimum importance, and does not mirror the island. |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `FOREGROUND_SERVICE_MICROPHONE` | Keep the overlay process alive, and the mic type while recording. |
-| Accessibility service | Draws the island above the status bar. Enable Island in Settings, Accessibility. It does not read the screen. |
+| Accessibility service | Draws the island above the status bar. Enable Island in Settings, Accessibility. The split animation uses in-memory screenshots and accessibility window information to separate the status bar from the app beneath it. |
 | `SYSTEM_ALERT_WINDOW` | Fallback overlay while the accessibility service is off. Android keeps that window under the status bar. |
 
 ## Motion

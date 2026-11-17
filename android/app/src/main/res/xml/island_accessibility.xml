@@ -4,7 +4,7 @@
     android:accessibilityEventTypes="typeWindowsChanged|typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
-    android:canRetrieveWindowContent="false"
+    android:canRetrieveWindowContent="true"
     android:canTakeScreenshot="true"
     android:isAccessibilityTool="true"
     android:notificationTimeout="100"

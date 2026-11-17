@@ -772,10 +772,20 @@ internal object IslandModes {
         if (rect == null || text.isEmpty() || rect.width < 2) return
         paint.color = color
         paint.alpha = alpha
+        val y = (rect.centerY - (paint.ascent() + paint.descent()) / 2.0).toFloat()
+        val textWidth = paint.measureText(text)
+        if (text.length < 15 && textWidth > rect.width) {
+            // Keep short values legible in narrow ears and during the width spring.
+            val anchor = (if (end) rect.right else rect.left).toFloat()
+            canvas.save()
+            canvas.scale((rect.width / textWidth).toFloat(), 1f, anchor, y)
+            canvas.drawText(text, if (end) anchor - textWidth else anchor, y, paint)
+            canvas.restore()
+            return
+        }
         val shown = ellipsize(text, paint, rect.width)
         val x = if (end) rect.right - paint.measureText(shown) else rect.left
-        val y = rect.centerY - (paint.ascent() + paint.descent()) / 2.0
-        canvas.drawText(shown, x.toFloat(), y.toFloat(), paint)
+        canvas.drawText(shown, x.toFloat(), y, paint)
     }
 
     private fun ring(canvas: Canvas, rect: DRect, progress: Float, color: Int, track: Int, thickness: Float, alpha: Int, figure: String? = null) {
@@ -867,9 +877,8 @@ internal object IslandModes {
         val sensor = sensorW.coerceAtLeast(1.0)
         val lens = if (holeW >= 1.0) holeW else 28.0
         val lensHalf = lens / 2.0
-        val ear = sensor / 2.0 - lensHalf - chargeClear - chargeEdge
-        if (textW <= ear + 0.5) return sensor
-        val needLeft = textW + lensHalf + chargeClear + chargeEdge
+        // Leave room for glyph overhang and rounding at the camera edge.
+        val needLeft = textW + 2.0 + lensHalf + chargeClear + chargeEdge
         val needRight = chargeGlyph + lensHalf + chargeClear + chargeEdge
         return max(sensor, max(needLeft, needRight) * 2.0)
     }

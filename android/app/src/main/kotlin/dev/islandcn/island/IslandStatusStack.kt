@@ -27,14 +27,11 @@ import kotlin.math.min
 /**
  * Status-bar band behind the island. The sliding mask is the status-bar foreground:
  * clock, icons, and scrim. Wallpaper and app pixels stay transparent.
- * While the island is opening or closing, each capture takes the open app window and the
- * full display. The app window's status-bar rows are drawn opaque, and the pixels that
- * differ are the clock, icons, and scrim. A missing app window still slides the display
- * foreground over a plate filled from those same rows. A display shot that is not back
- * yet keeps the last frame of this expand. A bitmap from a previous expand is dropped.
- * The pill is never hidden. There is no public API to shoot only the status-bar band,
- * so the display shot is cropped to those rows. The platform refuses a second display
- * shot inside about a third of a second, so a new pair waits out that gap.
+ * Prepare app/display pairs while collapsed, when our status band is transparent.
+ * Expansion freezes the latest prepared frame before its first draw; collapse uses the
+ * same pixels in reverse. Capturing after expansion starts is too late for the spring,
+ * and can photograph the growing pill. Never capture while the split is visible.
+ * The compact pill stays visible and is excluded from the fallback reconstruction.
  * Nothing is written to disk.
  */
 internal object IslandStatusStack {
@@ -63,6 +60,18 @@ internal object IslandStatusStack {
 
     /** takeScreenshot rejects a second call inside this window (ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT). */
     private const val SHOT_GAP_MS = 400L
+    private const val PREPARE_GAP_MS = 1000L
+
+    private val prepare = object : Runnable {
+        override fun run() {
+            val host = service ?: return
+            if (!live && !inflight && !IslandOverlayService.stripOpen() && interactive(host) &&
+                SystemClock.elapsedRealtime() >= nextShotAt) {
+                beginPair(++captureGen)
+            }
+            main.postDelayed(this, PREPARE_GAP_MS)
+        }
+    }
 
     private val clock = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -73,13 +82,15 @@ internal object IslandStatusStack {
                     live = false
                     if (frame != null) publish(null)
                 }
-                Intent.ACTION_SCREEN_ON, Intent.ACTION_TIME_TICK -> Unit
+                Intent.ACTION_SCREEN_ON, Intent.ACTION_TIME_TICK -> ensure()
             }
         }
     }
 
     fun attach(host: IslandAccessibilityService) {
         service = host
+        main.removeCallbacks(prepare)
+        main.post(prepare)
         val caps = host.serviceInfo?.capabilities ?: 0
         val can = (caps and AccessibilityServiceInfo.CAPABILITY_CAN_TAKE_SCREENSHOT) != 0
         Log.i(TAG, if (can) "Screenshot capability granted" else "Screenshot capability missing; toggle Island in Accessibility settings")
@@ -99,7 +110,9 @@ internal object IslandStatusStack {
     }
 
     fun detach(host: IslandAccessibilityService) {
-        if (service == host) service = null
+        if (service != host) return
+        service = null
+        main.removeCallbacks(prepare)
         captureGen++
         inflight = false
         live = false
@@ -113,35 +126,30 @@ internal object IslandStatusStack {
         publish(null)
     }
 
-    fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) ensure()
+    }
 
-    /** Shots are requested from the pill's frame loop. Nothing is captured while the strip is down. */
-    fun ensure() = Unit
+    /** Refresh the prepared frame without ever sampling our visible status band. */
+    fun ensure() {
+        if (service == null || live) return
+        main.removeCallbacks(prepare)
+        main.post(prepare)
+    }
 
-    /**
-     * One pair per turn of the capture pipeline, for as long as the island is open or moving.
-     * Starting a session drops whatever bitmap the previous screen left behind.
-     */
+    /** Freeze before the opening draw, and keep the frame until collapse has settled. */
     fun tick(active: Boolean) {
-        if (!active) {
-            if (!live) return
-            live = false
-            captureGen++
-            inflight = false
-            if (frame != null) publish(null)
-            return
-        }
-        if (!live) {
-            live = true
+        if (active == live) return
+        live = active
+        // A collapsed capture still in flight might observe the growing pill. Keep the
+        // last completed frame instead; never widen its exclusion to the expanded window.
+        captureGen++
+        inflight = false
+        if (active) {
             logged.clear()
-            captureGen++
-            nextShotAt = 0L
-            // Previous expand only. Frames captured after this stay up until a newer one replaces them.
-            if (frame != null) publish(null)
+        } else {
+            ensure()
         }
-        if (inflight) return
-        if (SystemClock.elapsedRealtime() < nextShotAt) return
-        beginPair(++captureGen)
     }
 
     private fun beginPair(gen: Int) {
@@ -164,84 +172,95 @@ internal object IslandStatusStack {
             return
         }
         nextShotAt = SystemClock.elapsedRealtime() + SHOT_GAP_MS
-        val apps = if (Build.VERSION.SDK_INT >= 34) rankApps(snapshot(host), screen.first, status) else emptyList()
-        val island = IslandOverlayService.pillBounds()?.let {
-            Rect(it.left - 3, it.top - 3, it.right + 3, it.bottom + 3)
+        val windows = if (Build.VERSION.SDK_INT >= 34) snapshot(host) else emptyList()
+        val apps = rankApps(windows, screen.first, status)
+        val systemBar = windows.firstOrNull {
+            val bounds = it.bounds
+            it.type == AccessibilityWindowInfo.TYPE_SYSTEM && bounds.left == 0 &&
+                bounds.top == 0 && bounds.width() == screen.first &&
+                bounds.height() in 1..(status + 8)
         }
-        var displayBmp: Bitmap? = null
-        var appBmp: Bitmap? = null
-        var appWin: Win? = null
-        var displayDone = false
-        var appDone = false
-        fun finishPair() {
+        val island = IslandOverlayService.pillBounds()?.apply { inset(-3, -3) }
+
+        fun captureBackground(icons: Bitmap?, index: Int) {
             if (gen != captureGen) {
-                displayBmp?.recycle()
-                appBmp?.recycle()
-                displayBmp = null
-                appBmp = null
+                icons?.recycle()
                 return
             }
-            if (!displayDone || !appDone) return
-            val shot = displayBmp
-            val shotApp = appBmp
-            val shotWin = appWin
-            displayBmp = null
-            appBmp = null
-            if (shot == null) {
-                shotApp?.recycle()
-                // Not back yet, or the platform interval rejected it. Keep this expand's frame.
-                chain(gen)
-                return
-            }
-            compose(shot, shotApp, shotWin, island, screen.first, screen.second, status, gen)
-        }
-        fun shootApps(index: Int) {
-            if (index >= apps.size) {
-                appDone = true
-                finishPair()
-                return
-            }
-            val win = apps[index]
-            try {
-                shootWindow(host, win.id) { bmp ->
+            val app = apps.getOrNull(index)
+            if (app != null) {
+                shootWindow(host, app.id) { bitmap ->
+                    val plate = bitmap?.let {
+                        val band = strip(screen.first, status)
+                        val valid = try {
+                            placeAppBand(band, it, app.bounds, status, screen.second)
+                        } finally {
+                            it.recycle()
+                        }
+                        if (valid) band else null.also { band.recycle() }
+                    }
                     main.post {
                         if (gen != captureGen) {
-                            bmp?.recycle()
-                            return@post
-                        }
-                        if (bmp != null && coversBand(win, bmp, screen.first, screen.second, status)) {
-                            appBmp = bmp
-                            appWin = win
-                            appDone = true
-                            finishPair()
+                            plate?.recycle()
+                            icons?.recycle()
+                        } else if (plate == null) {
+                            captureBackground(icons, index + 1)
                         } else {
-                            bmp?.recycle()
-                            shootApps(index + 1)
+                            captureDisplayBackground(null, plate, island, screen.first, status, gen, host)
                         }
                     }
                 }
-            } catch (error: Exception) {
-                Log.w(TAG, "Status capture failed to start", error)
-                shootApps(index + 1)
+            } else {
+                captureDisplayBackground(icons, null, island, screen.first, status, gen, host)
             }
         }
-        try {
-            shootDisplay(host) { bmp ->
+
+        if (systemBar == null) {
+            captureBackground(null, 0)
+        } else {
+            shootWindow(host, systemBar.id) { bitmap ->
+                val icons = bitmap?.let {
+                    val band = strip(screen.first, status)
+                    blit(band, it, systemBar.bounds, status)
+                    it.recycle()
+                    val count = covered(band)
+                    if (count in 1 until band.width * band.height) band else null.also { band.recycle() }
+                }
                 main.post {
-                    if (gen != captureGen) {
-                        bmp?.recycle()
-                        return@post
+                    if (icons == null) {
+                        captureBackground(null, 0)
+                    } else if (gen != captureGen) {
+                        icons.recycle()
+                    } else {
+                        // The app buffer can omit the system bar backdrop or include decor
+                        // that is clipped on screen. Use the visible pixels as the plate.
+                        captureDisplayBackground(icons, null, island, screen.first, status, gen, host)
                     }
-                    displayBmp = bmp
-                    displayDone = true
-                    finishPair()
                 }
             }
-            shootApps(0)
-        } catch (error: Exception) {
-            Log.w(TAG, "Status capture failed to start", error)
-            logSkip("capture failed to start")
-            inflight = false
+        }
+    }
+
+    private fun captureDisplayBackground(
+        icons: Bitmap?,
+        plate: Bitmap?,
+        island: Rect?,
+        width: Int,
+        status: Int,
+        gen: Int,
+        host: AccessibilityService,
+    ) {
+        shootDisplay(host) { bitmap ->
+            main.post {
+                if (gen != captureGen || bitmap == null) {
+                    bitmap?.recycle()
+                    icons?.recycle()
+                    plate?.recycle()
+                    chain(gen)
+                    return@post
+                }
+                compose(bitmap, plate, icons, island, width, status, gen)
+            }
         }
     }
 
@@ -269,11 +288,10 @@ internal object IslandStatusStack {
 
     private fun compose(
         display: Bitmap,
-        appBmp: Bitmap?,
-        app: Win?,
+        appBand: Bitmap?,
+        icons: Bitmap?,
         island: Rect?,
         screenW: Int,
-        screenH: Int,
         status: Int,
         gen: Int,
     ) {
@@ -285,32 +303,71 @@ internal object IslandStatusStack {
                 val displayBand = cropTop(display, screenW, status)
                 var mask: Bitmap? = null
                 var plate: Bitmap? = null
-                if (appBmp != null && app != null) {
-                    val appBand = strip(screenW, status)
-                    if (placeAppBand(appBand, appBmp, app.bounds, status, screenH)) {
-                        plate = appBand
-                        // The display shot includes this overlay. Replace the pill with the app
-                        // pixels so the island is not part of the diff, without hiding it.
-                        copyRect(displayBand, appBand, island)
-                        val cut = difference(displayBand, appBand)
-                        if (cut != null) {
-                            mask = cut.bitmap
-                            report = "Status strip diff kept ${cut.kept} of ${cut.total}"
-                        } else {
-                            mask = strip(screenW, status)
-                            report = "Status strip diff empty; plate kept"
+                if (appBand != null) {
+                    plate = appBand
+                    copyRect(displayBand, appBand, island)
+                    val cut = difference(displayBand, appBand)
+                    mask = cut?.bitmap ?: strip(screenW, status)
+                    report = "Status strip diff kept ${cut?.kept ?: 0} pixels"
+                } else if (icons != null) {
+                    // Use SystemUI alpha to locate the original glyphs exactly. Include
+                    // the pill in the exclusion so it cannot supply background pixels.
+                    val excluded = strip(screenW, status)
+                    try {
+                        // The display and SystemUI shots are asynchronous. Pad the cutout
+                        // to cover antialiasing and small icon shifts between the shots.
+                        val padding = (screenW / 180).coerceAtLeast(2)
+                        val pixels = IntArray(screenW * status)
+                        icons.getPixels(pixels, 0, screenW, 0, 0, screenW, status)
+                        val canvas = Canvas(excluded)
+                        val paint = Paint()
+                        for (y in 0 until status) {
+                            var x = 0
+                            while (x < screenW) {
+                                if (pixels[y * screenW + x] ushr 24 == 0) {
+                                    x++
+                                    continue
+                                }
+                                val start = x++
+                                while (x < screenW && pixels[y * screenW + x] ushr 24 != 0) x++
+                                canvas.drawRect(start - padding.toFloat(), y - padding.toFloat(),
+                                    x + padding.toFloat(), y + padding + 1f, paint)
+                            }
                         }
-                    } else {
-                        appBand.recycle()
+                        markExcluded(excluded, island)
+                        plate = coverBand(displayBand, excluded)
+                    } finally {
+                        excluded.recycle()
                     }
+                    mask = icons
+                    report = "Status strip uses isolated SystemUI and reconstructed background"
                 }
                 if (plate == null || mask == null) {
                     mask?.recycle()
                     plate?.recycle()
                     // No app window, or its status-bar rows were empty. Slide the display
                     // foreground over a plate filled from those same rows.
-                    val fg = foreground(displayBand, rowBelow(display, screenW, status))
+                    val reference = rowBelow(display, screenW, status)
+                    // The expanded pill can also cover the reference row below the bar.
+                    // Borrow a neighbor outside its columns instead of classifying against it.
+                    if (island != null) {
+                        val left = island.left.coerceIn(0, screenW)
+                        val right = island.right.coerceIn(left, screenW)
+                        for (x in left until right) {
+                            val donor = when {
+                                left == 0 -> right.takeIf { it < screenW }
+                                right == screenW -> left - 1
+                                x - left < right - x -> left - 1
+                                else -> right
+                            }
+                            reference[x] = donor?.let { reference[it] } ?: 0
+                        }
+                    }
+                    val fg = foreground(displayBand, reference)
                     if (fg.kept > 0) {
+                        // Exclude the pill BEFORE filling the plate. Clearing only the final
+                        // mask leaves pill pixels in the stationary background (and as donors).
+                        markExcluded(fg.bitmap, island)
                         val still = coverBand(displayBand, fg.bitmap)
                         plate = still
                         mask = fg.bitmap
@@ -323,7 +380,7 @@ internal object IslandStatusStack {
                     }
                 }
                 if (plate != null && mask != null) {
-                    if (island != null) clearRect(mask, island)
+                    if (island != null && mask !== icons) clearRect(mask, island)
                     built = Frame(plate, mask, screenW, status)
                 } else {
                     mask?.recycle()
@@ -335,11 +392,14 @@ internal object IslandStatusStack {
                 report = "compose failed"
             }
             display.recycle()
-            appBmp?.recycle()
+            if (built == null) {
+                appBand?.recycle()
+                icons?.recycle()
+            }
             val line = report
             val frame = built
             main.post {
-                if (gen != captureGen || !live) {
+                if (gen != captureGen || live) {
                     frame?.windowStrip?.recycle()
                     frame?.mask?.recycle()
                     return@post
@@ -595,6 +655,14 @@ internal object IslandStatusStack {
         val pixels = IntArray(width * height)
         src.getPixels(pixels, 0, width, left, top, width, height)
         dest.setPixels(pixels, 0, width, left, top, width, height)
+    }
+
+    /** Nontransparent pixels cannot be donors in coverBand. Cleared before publication. */
+    private fun markExcluded(mask: Bitmap, rect: Rect?) {
+        if (rect == null) return
+        val clipped = Rect(rect)
+        if (!clipped.intersect(0, 0, mask.width, mask.height)) return
+        Canvas(mask).drawRect(clipped, Paint().apply { color = android.graphics.Color.BLACK })
     }
 
     private fun clearRect(bitmap: Bitmap, rect: Rect) {

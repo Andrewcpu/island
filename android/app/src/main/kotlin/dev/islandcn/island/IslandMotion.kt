@@ -357,7 +357,9 @@ internal class IslandRig {
             if (bubbleHeight.pos < 1) return null
             val width = bubbleRight.pos - bubbleLeft.pos
             if (width < 1) return null
-            return DRect(centerX + bubbleLeft.pos, top.pos, centerX + bubbleRight.pos, top.pos + bubbleHeight.pos)
+            // Keep the lobes on the same centerline as their heights diverge during a merge.
+            val bubbleTop = top.pos + (height.pos - bubbleHeight.pos) / 2.0
+            return DRect(centerX + bubbleLeft.pos, bubbleTop, centerX + bubbleRight.pos, bubbleTop + bubbleHeight.pos)
         }
 
     init {
