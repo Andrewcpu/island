@@ -13,8 +13,8 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.util.Log
+import android.view.Choreographer
 import android.view.Display
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -27,13 +27,12 @@ import kotlin.math.min
 /**
  * Status-bar band behind the island. The sliding mask is the status-bar foreground:
  * clock, icons, and scrim. Wallpaper and app pixels stay transparent.
- * The app-window difference is used when it actually separates those pixels. A failed or
- * missing diff does not skip the animation: the display band is filtered down to the clock,
- * icons, and scrim, and that mask still slides. The still plate is the app window's own
- * status-bar pixels when that shot covers the bar. Otherwise the plate is filled from other
- * pixels in the same status-bar rows, never from below the bar and never by stretching a row.
- * The island window is never hidden for a capture. While the strip is already up, the last
- * frame is kept. The island's own pixels are punched out of the mask.
+ * Each expand takes a new display shot and a new app-window shot before the island draws.
+ * Nothing from an earlier screen, app, or expand is reused. The still plate is only the
+ * app window's status-bar rows. A failed diff still slides clock, icons, and scrim over
+ * that fresh plate. Pixels from below the bar are never stretched up.
+ * The island window is never hidden. The pair is taken before this expand draws, and the
+ * pre-expand pill rect is removed from the mask so the island is not part of the slide.
  * Nothing is written to disk.
  */
 internal object IslandStatusStack {
@@ -52,22 +51,23 @@ internal object IslandStatusStack {
     private val work = Executors.newSingleThreadExecutor()
     private var service: IslandAccessibilityService? = null
     private var inflight = false
-    private var pending = false
-    private var lastStart = 0L
     private var registered = false
     private var frame: Frame? = null
     private var loggedShot = false
-    private val logged = HashSet<String>()
-    private var suppressUntil = 0L
-    private var nextTry = 0L
-
-    private val capture = Runnable { start() }
+    private var captureGen = 0
+    private var onCaptured: (() -> Unit)? = null
 
     private val clock = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
-                Intent.ACTION_SCREEN_OFF -> main.removeCallbacks(capture)
-                Intent.ACTION_SCREEN_ON, Intent.ACTION_TIME_TICK -> schedule(400)
+                Intent.ACTION_SCREEN_OFF -> {
+                    captureGen++
+                    inflight = false
+                    val resume = onCaptured
+                    onCaptured = null
+                    resume?.invoke()
+                }
+                Intent.ACTION_SCREEN_ON, Intent.ACTION_TIME_TICK -> Unit
             }
         }
     }
@@ -90,12 +90,15 @@ internal object IslandStatusStack {
             }
             registered = true
         }
-        schedule(800)
     }
 
     fun detach(host: IslandAccessibilityService) {
         if (service == host) service = null
-        main.removeCallbacks(capture)
+        captureGen++
+        inflight = false
+        val resume = onCaptured
+        onCaptured = null
+        resume?.invoke()
         if (registered) {
             try {
                 host.unregisterReceiver(clock)
@@ -106,108 +109,97 @@ internal object IslandStatusStack {
         publish(null)
     }
 
-    fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (SystemClock.uptimeMillis() < suppressUntil) return
-        val type = event?.eventType ?: return
-        if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED || type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            schedule(500)
+    fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+
+    /** Shots are taken before the expand draws. A later capture would include the island. */
+    fun ensure() = Unit
+
+    /**
+     * Fresh display and app shots, taken while this expand has not been drawn.
+     * [done] runs after those bitmaps are published, or after a logged skip.
+     */
+    fun captureBeforeDraw(done: () -> Unit) {
+        val gen = ++captureGen
+        onCaptured = done
+        publish(null)
+        Choreographer.getInstance().postFrameCallback {
+            if (gen != captureGen) return@postFrameCallback
+            beginPair(gen)
         }
+        main.postDelayed({
+            if (gen != captureGen || onCaptured == null) return@postDelayed
+            logSkip("capture timed out")
+            val resume = onCaptured
+            onCaptured = null
+            captureGen++
+            inflight = false
+            resume?.invoke()
+        }, 1200)
     }
 
-    private fun schedule(delayMs: Long) {
-        main.removeCallbacks(capture)
-        main.postDelayed(capture, delayMs)
+    private fun deliver(gen: Int) {
+        if (gen != captureGen) return
+        val resume = onCaptured ?: return
+        onCaptured = null
+        resume()
     }
 
-    /** A hold with nothing to draw must still try a capture, and must say why if it cannot. */
-    fun ensure() {
-        val now = SystemClock.uptimeMillis()
-        if (now < nextTry || frame != null || inflight) return
-        if (service == null) {
-            logSkip("accessibility service not attached")
-            nextTry = now + 2000L
-            return
-        }
-        if (main.hasCallbacks(capture)) return
-        schedule(30)
-    }
-
-    private fun start() {
+    private fun beginPair(gen: Int) {
         val host = service
         if (host == null) {
             logSkip("accessibility service not attached")
-            nextTry = SystemClock.uptimeMillis() + 2000L
+            deliver(gen)
             return
         }
         if (!interactive(host)) {
             logSkip("screen is not interactive")
-            nextTry = SystemClock.uptimeMillis() + 2000L
+            deliver(gen)
             return
         }
-        val now = SystemClock.uptimeMillis()
-        if (inflight) {
-            pending = true
-            return
-        }
-        if (now - lastStart < 700L) {
-            schedule(700L - (now - lastStart))
-            return
-        }
-        if (frame != null && IslandOverlayService.stripOpen()) {
-            logSkip("keeping the last frame")
-            nextTry = now + 2000L
-            return
-        }
-        lastStart = now
+        if (gen != captureGen) return
         inflight = true
-        val token = now
-        main.postDelayed({
-            if (inflight && lastStart == token) {
-                Log.w(TAG, "Status stack capture timed out")
-                inflight = false
-                if (pending) {
-                    pending = false
-                    schedule(700)
-                }
-            }
-        }, 4500)
         val screen = screenSize(host)
         val status = statusBarPx(host, screen.second)
         if (screen.first < 2 || status < 2) {
             logSkip("status bar size ${screen.first}x$status")
-            finish(null, looked = true)
+            inflight = false
+            deliver(gen)
             return
         }
         val apps = if (Build.VERSION.SDK_INT >= 34) rankApps(snapshot(host), screen.first, status) else emptyList()
-        val island = IslandOverlayService.pillBounds()
+        val island = IslandOverlayService.pillBounds()?.let {
+            Rect(it.left - 3, it.top - 3, it.right + 3, it.bottom + 3)
+        }
         var displayBmp: Bitmap? = null
         var appBmp: Bitmap? = null
         var appWin: Win? = null
         var displayDone = false
         var appDone = false
         fun finishPair() {
+            if (gen != captureGen) {
+                displayBmp?.recycle()
+                appBmp?.recycle()
+                displayBmp = null
+                appBmp = null
+                return
+            }
             if (!displayDone || !appDone) return
             val shot = displayBmp
             val shotApp = appBmp
             val shotWin = appWin
             displayBmp = null
             appBmp = null
-            if (!inflight) {
-                shot?.recycle()
-                shotApp?.recycle()
-                return
-            }
+            inflight = false
             if (shot == null) {
                 shotApp?.recycle()
                 logSkip("display screenshot missing")
-                finish(null, looked = true)
+                deliver(gen)
                 return
             }
-            compose(shot, shotApp, shotWin, island, screen.first, screen.second, status)
+            compose(shot, shotApp, shotWin, island, screen.first, screen.second, status, gen)
         }
         fun shootApps(index: Int) {
             if (index >= apps.size) {
-                if (appBmp == null) logSkip("app status-bar band missing")
                 appDone = true
                 finishPair()
                 return
@@ -216,6 +208,10 @@ internal object IslandStatusStack {
             try {
                 shootWindow(host, win.id) { bmp ->
                     main.post {
+                        if (gen != captureGen) {
+                            bmp?.recycle()
+                            return@post
+                        }
                         if (bmp != null && coversBand(win, bmp, screen.first, screen.second, status)) {
                             appBmp = bmp
                             appWin = win
@@ -235,6 +231,10 @@ internal object IslandStatusStack {
         try {
             shootDisplay(host) { bmp ->
                 main.post {
+                    if (gen != captureGen) {
+                        bmp?.recycle()
+                        return@post
+                    }
                     displayBmp = bmp
                     displayDone = true
                     finishPair()
@@ -244,19 +244,17 @@ internal object IslandStatusStack {
         } catch (error: Exception) {
             Log.w(TAG, "Status capture failed to start", error)
             logSkip("capture failed to start")
-            finish(null, looked = true)
+            inflight = false
+            deliver(gen)
         }
     }
 
-    /** One line per distinct reason, so a skipped capture cannot stay silent. */
+    /** One line for this skip. A later expand logs again. */
     private fun logSkip(reason: String) {
-        val key = reason.substringBefore(';').substringBefore('(').trim()
-        if (!logged.add(key)) return
         Log.w(TAG, "Status slide skipped: $reason")
     }
 
     private fun logKept(line: String) {
-        if (!logged.add("kept")) return
         Log.i(TAG, line)
     }
 
@@ -273,6 +271,7 @@ internal object IslandStatusStack {
         screenW: Int,
         screenH: Int,
         status: Int,
+        gen: Int,
     ) {
         work.execute {
             var built: Frame? = null
@@ -318,14 +317,13 @@ internal object IslandStatusStack {
                     }
                 }
                 val slide = mask
-                if (slide != null) {
+                if (slide != null && plate != null) {
                     if (island != null) clearRect(slide, island)
-                    val still = plate ?: coverBand(displayBand, slide)
-                    if (plate == null && island != null) clearRect(still, island)
-                    built = Frame(still, slide, screenW, status)
+                    built = Frame(plate, slide, screenW, status)
                 } else {
+                    slide?.recycle()
                     plate?.recycle()
-                    if (report == null) report = "$reason; no foreground"
+                    if (report == null) report = "$reason; no fresh app band"
                 }
                 displayBand.recycle()
             } catch (error: Exception) {
@@ -337,7 +335,11 @@ internal object IslandStatusStack {
             val line = report
             val frame = built
             main.post {
-                if (frame == null) nextTry = SystemClock.uptimeMillis() + 2000L
+                if (gen != captureGen) {
+                    frame?.windowStrip?.recycle()
+                    frame?.mask?.recycle()
+                    return@post
+                }
                 if (line != null) {
                     when {
                         frame == null -> logSkip(line)
@@ -346,6 +348,7 @@ internal object IslandStatusStack {
                     }
                 }
                 finish(frame, looked = true)
+                deliver(gen)
             }
         }
     }
@@ -354,10 +357,6 @@ internal object IslandStatusStack {
         if (!looked) return
         if (next != null || frame == null) publish(next)
         inflight = false
-        if (pending) {
-            pending = false
-            schedule(700)
-        }
     }
 
     private fun publish(next: Frame?) {
@@ -449,52 +448,6 @@ internal object IslandStatusStack {
     }
 
     private fun strip(width: Int, height: Int) = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-
-    /**
-     * Still layer when the app window has no status-bar pixels. Masked pixels take the nearest
-     * unmasked pixel in the same status-bar row. Nothing is read from below the bar, and a row
-     * that is entirely foreground stays transparent instead of being stretched.
-     */
-    private fun coverBand(display: Bitmap, mask: Bitmap): Bitmap {
-        val width = display.width
-        val height = display.height
-        val src = IntArray(width * height)
-        val cut = IntArray(width * height)
-        display.getPixels(src, 0, width, 0, 0, width, height)
-        mask.getPixels(cut, 0, width, 0, 0, width, height)
-        val out = IntArray(width * height)
-        val nearestLeft = IntArray(width)
-        for (y in 0 until height) {
-            val row = y * width
-            var last = -1
-            for (x in 0 until width) {
-                if (cut[row + x] ushr 24 == 0) last = x
-                nearestLeft[x] = last
-            }
-            last = -1
-            for (x in width - 1 downTo 0) {
-                val i = row + x
-                if (cut[i] ushr 24 == 0) {
-                    out[i] = if (src[i] ushr 24 == 0) 0 else src[i] or 0xFF000000.toInt()
-                    last = x
-                    continue
-                }
-                val left = nearestLeft[x]
-                val right = last
-                val pick = when {
-                    left < 0 && right < 0 -> -1
-                    left < 0 -> right
-                    right < 0 -> left
-                    x - left <= right - x -> left
-                    else -> right
-                }
-                out[i] = if (pick < 0) 0 else src[row + pick] or 0xFF000000.toInt()
-            }
-        }
-        val plate = strip(width, height)
-        plate.setPixels(out, 0, width, 0, 0, width, height)
-        return plate
-    }
 
     /** Top [status] rows of [src], scaled to the screen width. */
     private fun cropTop(src: Bitmap, screenW: Int, status: Int): Bitmap {

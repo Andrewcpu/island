@@ -134,7 +134,10 @@ class IslandPillView(context: Context) : View(context) {
         isFocusable = false
         isFocusableInTouchMode = false
         rig.onPressed = { id -> onTap(id) }
-        rig.onExpand = { expandTick() }
+        rig.onExpand = {
+            expandTick()
+            kick()
+        }
         rig.canExpand = { id -> id != "lock" || !lockAuthenticated }
         IslandModes.install(context)
     }
