@@ -61,7 +61,7 @@ internal class IslandStatusBand(context: Context) : View(context) {
         val shiftRight = spread * right.width
         paint.alpha = 255
         paint.isFilterBitmap = false
-        // App-window pixels from this band only. They are not a stretched row from below.
+        // App band first, so it covers the real status bar. Only the content layer slides.
         if (base != null && !base.isRecycled) canvas.drawBitmap(base, 0f, 0f, paint)
         canvas.drawBitmap(left, -shiftLeft, 0f, paint)
         canvas.drawBitmap(right, left.width + shiftRight, 0f, paint)

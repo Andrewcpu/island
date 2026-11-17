@@ -13,7 +13,6 @@ import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
-import android.view.View
 import android.view.WindowManager
 import android.accessibilityservice.AccessibilityService
 import androidx.core.app.NotificationCompat
@@ -179,29 +178,6 @@ class IslandOverlayService : Service() {
                 setFitInsetsIgnoringVisibility(true)
             }
             disableMoveAnimation()
-        }
-    }
-
-    /** Hide both overlays so a display screenshot is the status bar without the island. */
-    fun concealForCapture(hidden: Boolean) {
-        val alpha = if (hidden) 0f else 1f
-        // The pill stays touchable. Alpha 0 keeps it out of the shot without cancelling a hold.
-        concealView(root, View.VISIBLE, alpha)
-        concealView(band, if (hidden) View.INVISIBLE else View.VISIBLE, alpha)
-        if (!hidden) band?.invalidate()
-    }
-
-    private fun concealView(view: View?, visibility: Int, alpha: Float) {
-        val target = view ?: return
-        target.visibility = visibility
-        val params = target.layoutParams as? WindowManager.LayoutParams ?: return
-        if (params.alpha == alpha) return
-        params.alpha = alpha
-        params.disableMoveAnimation()
-        try {
-            window?.updateViewLayout(target, params)
-        } catch (error: Exception) {
-            Log.w(TAG, "Status capture conceal failed", error)
         }
     }
 
@@ -440,8 +416,20 @@ class IslandOverlayService : Service() {
             if (open || strip.drawn) strip.invalidate()
         }
 
-        internal fun conceal(hidden: Boolean) {
-            instance?.concealForCapture(hidden)
+        /** True while our status strip is on screen. A capture then would photograph itself. */
+        fun stripOpen(): Boolean {
+            val host = instance ?: return false
+            val open = (host.pill?.barSpread() ?: 0f) > 0.002f
+            return open && host.band?.drawn == true
+        }
+
+        /** Pill window on screen. The capture must not move or hide this window. */
+        fun pillBounds(): android.graphics.Rect? {
+            val view = instance?.root ?: return null
+            if (view.width < 2 || view.height < 2) return null
+            val loc = IntArray(2)
+            view.getLocationOnScreen(loc)
+            return android.graphics.Rect(loc[0], loc[1], loc[0] + view.width, loc[1] + view.height)
         }
 
         fun onKeyguard(showing: Boolean, deviceLocked: Boolean) {
