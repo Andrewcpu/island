@@ -13,6 +13,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.Display
 import android.view.WindowManager
@@ -26,11 +27,14 @@ import kotlin.math.min
 /**
  * Status-bar band behind the island. The sliding mask is the status-bar foreground:
  * clock, icons, and scrim. Wallpaper and app pixels stay transparent.
- * While the island is opening or closing, every frame requests a new pair: the open app
- * window, then the full display. The app window's status-bar rows are drawn opaque, and
- * the pixels that differ are the clock, icons, and scrim. A bitmap from an earlier frame
- * or an earlier screen is dropped. The pill is never hidden. There is no public API to
- * shoot only the status-bar band, so the display shot is cropped to those rows.
+ * While the island is opening or closing, each capture takes the open app window and the
+ * full display. The app window's status-bar rows are drawn opaque, and the pixels that
+ * differ are the clock, icons, and scrim. A missing app window still slides the display
+ * foreground over a plate filled from those same rows. A display shot that is not back
+ * yet keeps the last frame of this expand. A bitmap from a previous expand is dropped.
+ * The pill is never hidden. There is no public API to shoot only the status-bar band,
+ * so the display shot is cropped to those rows. The platform refuses a second display
+ * shot inside about a third of a second, so a new pair waits out that gap.
  * Nothing is written to disk.
  */
 internal object IslandStatusStack {
@@ -54,7 +58,11 @@ internal object IslandStatusStack {
     private var frame: Frame? = null
     private var loggedShot = false
     private var captureGen = 0
+    private var nextShotAt = 0L
     private val logged = HashSet<String>()
+
+    /** takeScreenshot rejects a second call inside this window (ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT). */
+    private const val SHOT_GAP_MS = 400L
 
     private val clock = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -127,9 +135,12 @@ internal object IslandStatusStack {
             live = true
             logged.clear()
             captureGen++
+            nextShotAt = 0L
+            // Previous expand only. Frames captured after this stay up until a newer one replaces them.
             if (frame != null) publish(null)
         }
         if (inflight) return
+        if (SystemClock.elapsedRealtime() < nextShotAt) return
         beginPair(++captureGen)
     }
 
@@ -152,6 +163,7 @@ internal object IslandStatusStack {
             inflight = false
             return
         }
+        nextShotAt = SystemClock.elapsedRealtime() + SHOT_GAP_MS
         val apps = if (Build.VERSION.SDK_INT >= 34) rankApps(snapshot(host), screen.first, status) else emptyList()
         val island = IslandOverlayService.pillBounds()?.let {
             Rect(it.left - 3, it.top - 3, it.right + 3, it.bottom + 3)
@@ -177,7 +189,7 @@ internal object IslandStatusStack {
             appBmp = null
             if (shot == null) {
                 shotApp?.recycle()
-                logSkip("display screenshot missing")
+                // Not back yet, or the platform interval rejected it. Keep this expand's frame.
                 chain(gen)
                 return
             }
@@ -248,7 +260,6 @@ internal object IslandStatusStack {
     private fun chain(gen: Int) {
         if (gen != captureGen) return
         inflight = false
-        if (live) beginPair(++captureGen)
     }
 
     private fun interactive(context: Context): Boolean {
@@ -291,10 +302,25 @@ internal object IslandStatusStack {
                         }
                     } else {
                         appBand.recycle()
-                        report = "app status-bar band is empty"
                     }
-                } else {
-                    report = if (app == null) "no app window" else "app screenshot missing"
+                }
+                if (plate == null || mask == null) {
+                    mask?.recycle()
+                    plate?.recycle()
+                    // No app window, or its status-bar rows were empty. Slide the display
+                    // foreground over a plate filled from those same rows.
+                    val fg = foreground(displayBand, rowBelow(display, screenW, status))
+                    if (fg.kept > 0) {
+                        val still = coverBand(displayBand, fg.bitmap)
+                        plate = still
+                        mask = fg.bitmap
+                        report = "Status strip foreground kept ${fg.kept} of ${fg.total}"
+                    } else {
+                        fg.bitmap.recycle()
+                        plate = null
+                        mask = null
+                        report = "foreground found nothing"
+                    }
                 }
                 if (plate != null && mask != null) {
                     if (island != null) clearRect(mask, island)
@@ -354,7 +380,8 @@ internal object IslandStatusStack {
                 }
 
                 override fun onFailure(errorCode: Int) {
-                    if (!loggedShot) {
+                    // A shot inside the platform interval is not a failure of the slide. The last frame stays.
+                    if (errorCode != AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT && !loggedShot) {
                         loggedShot = true
                         val caps = host.serviceInfo?.capabilities ?: 0
                         val can = (caps and AccessibilityServiceInfo.CAPABILITY_CAN_TAKE_SCREENSHOT) != 0
