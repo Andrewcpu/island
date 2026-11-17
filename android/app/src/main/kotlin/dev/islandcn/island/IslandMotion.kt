@@ -265,6 +265,27 @@ internal class IslandRig {
     private var bubbleCutAt = -1.0
     private var wakeGen = 0
 
+    /**
+     * 0 at the collapsed width, 1 at the expanded width. This is the live edge spring,
+     * not a second curve: the status-bar halves read it and move with the pill.
+     */
+    fun barSpread(): Double {
+        if (!::left.isInitialized || !::right.isInitialized) return 0.0
+        val live = (right.pos - left.pos).coerceAtLeast(0.0)
+        val sample = measure()
+        val open = shape(Kind.EXPANDED, sample)
+        val openW = open.right - open.left
+        val restKind = when {
+            visible().isEmpty() -> Kind.IDLE
+            visible().size == 1 -> Kind.COMPACT
+            else -> Kind.MINIMAL
+        }
+        val restW = shape(restKind, sample).let { it.right - it.left }
+        val span = openW - restW
+        if (span < 1.0) return 0.0
+        return ((live - restW) / span).coerceIn(0.0, 1.0)
+    }
+
     val primary: Spec? get() = visible().firstOrNull()
     val secondary: Spec? get() = visible().getOrNull(1)
 

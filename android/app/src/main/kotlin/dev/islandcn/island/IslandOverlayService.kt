@@ -29,6 +29,8 @@ import androidx.core.content.ContextCompat
 class IslandOverlayService : Service() {
     private var pill: IslandPillView? = null
     private var root: IslandPillView? = null
+    private var band: IslandStatusBand? = null
+    private var heldFrame: IslandStatusStack.Frame? = null
     private var window: WindowManager? = null
     private var windowType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
     private var hostContext: Context = this
@@ -97,6 +99,8 @@ class IslandOverlayService : Service() {
             y = frame[1]
         }
         val manager = window ?: return
+        // The band is added first so the pill stays above both status-bar halves.
+        addBand(manager, view)
         manager.addView(view, params)
         root = view
         appliedX = params.x
@@ -107,13 +111,104 @@ class IslandOverlayService : Service() {
     }
 
     private fun removeWindow() {
-        val view = root ?: return
-        try {
-            window?.removeView(view)
-        } catch (_: Exception) {
+        val manager = window
+        val view = root
+        if (view != null) {
+            try {
+                manager?.removeView(view)
+            } catch (_: Exception) {
+            }
+        }
+        val strip = band
+        if (strip != null) {
+            try {
+                manager?.removeView(strip)
+            } catch (_: Exception) {
+            }
         }
         root = null
         calibrated = false
+    }
+
+    /** Status-bar band. Not touchable, so only the pill window receives taps. */
+    private fun addBand(manager: WindowManager, pillView: IslandPillView) {
+        val width = (heldFrame?.widthPx ?: pillView.screenPx).coerceAtLeast(1)
+        val height = (heldFrame?.statusPx ?: IslandStatusStack.statusBarPixels(this)).coerceAtLeast(1)
+        val view = band ?: IslandStatusBand(this).also { band = it }
+        view.pill = pillView
+        heldFrame?.let { view.setFrame(it) }
+        val params = bandParams(width, height)
+        try {
+            if (view.parent == null) manager.addView(view, params)
+            else manager.updateViewLayout(view, params)
+        } catch (error: Exception) {
+            Log.w(TAG, "Status band failed", error)
+            return
+        }
+        view.post { alignBand() }
+    }
+
+    private fun bandParams(width: Int, height: Int): WindowManager.LayoutParams {
+        return WindowManager.LayoutParams(
+            width,
+            height,
+            windowType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.LEFT
+            x = 0
+            y = 0
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            }
+            if (Build.VERSION.SDK_INT >= 30) {
+                setFitInsetsTypes(0)
+                setFitInsetsSides(0)
+                setFitInsetsIgnoringVisibility(true)
+            }
+            disableMoveAnimation()
+        }
+    }
+
+    private fun alignBand() {
+        val view = band ?: return
+        val manager = window ?: return
+        val params = view.layoutParams as? WindowManager.LayoutParams ?: return
+        val loc = IntArray(2)
+        view.getLocationOnScreen(loc)
+        if (loc[0] == 0 && loc[1] == 0) return
+        params.x -= loc[0]
+        params.y -= loc[1]
+        params.disableMoveAnimation()
+        try {
+            manager.updateViewLayout(view, params)
+        } catch (error: Exception) {
+            Log.w(TAG, "Status band align failed", error)
+        }
+    }
+
+    private fun showStatus(frame: IslandStatusStack.Frame?) {
+        heldFrame = frame
+        val view = band
+        if (view == null) return
+        view.setFrame(frame)
+        if (frame == null) return
+        val params = view.layoutParams as? WindowManager.LayoutParams ?: return
+        if (params.width == frame.widthPx && params.height == frame.statusPx) return
+        params.width = frame.widthPx.coerceAtLeast(1)
+        params.height = frame.statusPx.coerceAtLeast(1)
+        params.disableMoveAnimation()
+        try {
+            window?.updateViewLayout(view, params)
+        } catch (error: Exception) {
+            Log.w(TAG, "Status band resize failed", error)
+        }
     }
 
     fun applyMedia(track: IslandMedia.Track?) {
@@ -297,7 +392,14 @@ class IslandOverlayService : Service() {
         }
 
         internal fun statusFrame(frame: IslandStatusStack.Frame?) {
-            instance?.pill?.setStatusStack(frame)
+            instance?.showStatus(frame)
+        }
+
+        fun syncStatusBand() {
+            val host = instance ?: return
+            val strip = host.band ?: return
+            val open = (host.pill?.barSpread() ?: 0f) > 0.002f
+            if (open || strip.drawn) strip.invalidate()
         }
 
         fun onKeyguard(showing: Boolean, deviceLocked: Boolean) {

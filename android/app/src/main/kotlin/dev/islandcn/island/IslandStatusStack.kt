@@ -352,6 +352,11 @@ internal object IslandStatusStack {
         return hit.intersect(0, 0, screenW, status) && hit.width() > 1 && hit.height() > 1
     }
 
+    internal fun statusBarPixels(context: Context): Int {
+        val screenH = context.getSystemService(WindowManager::class.java)?.currentWindowMetrics?.bounds?.height() ?: 0
+        return statusBarPx(context, screenH)
+    }
+
     private fun screenSize(context: Context): Pair<Int, Int> {
         val bounds = context.getSystemService(WindowManager::class.java)?.currentWindowMetrics?.bounds
         return (bounds?.width() ?: 0) to (bounds?.height() ?: 0)

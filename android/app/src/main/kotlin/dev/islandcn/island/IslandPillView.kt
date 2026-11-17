@@ -100,34 +100,8 @@ class IslandPillView(context: Context) : View(context) {
         color = Color.BLACK
         xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
     }
-    private val stackPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-    private var statusFrame: IslandStatusStack.Frame? = null
-
-    /** App window, then the status-bar mask, both clipped to the status-bar band. The island is drawn after this. */
-    internal fun setStatusStack(frame: IslandStatusStack.Frame?) {
-        statusFrame = frame
-        invalidate()
-    }
-
-    private fun drawStatusStack(canvas: Canvas, shell: Path, bubble: Path?) {
-        val frame = statusFrame ?: return
-        if (frame.windowStrip.isRecycled || frame.mask.isRecycled) return
-        if (frame.widthPx < 1 || frame.statusPx < 1) return
-        val width = frame.widthPx / density
-        val height = frame.statusPx / density
-        val cover = Path()
-        cover.addPath(shell)
-        if (bubble != null) cover.addPath(bubble)
-        cover.fillType = Path.FillType.WINDING
-        canvas.save()
-        // Status-bar band only, and only inside the island, so the rest of the bar stays the real one.
-        canvas.clipRect(0f, 0f, width, height)
-        canvas.clipPath(cover)
-        val dst = RectF(0f, 0f, width, height)
-        canvas.drawBitmap(frame.windowStrip, null, dst, stackPaint)
-        canvas.drawBitmap(frame.mask, null, dst, stackPaint)
-        canvas.restore()
-    }
+    /** 0 while collapsed, 1 at the expanded width. The status-bar halves follow this. */
+    internal fun barSpread(): Float = rig.barSpread().toFloat()
 
     private val keyline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -151,6 +125,7 @@ class IslandPillView(context: Context) : View(context) {
         }
         publish()
         invalidate()
+        IslandOverlayService.syncStatusBand()
         if (rig.animating || ticking() || wakeUntil > SystemClock.elapsedRealtime()) kick()
     }
 
@@ -793,7 +768,6 @@ class IslandPillView(context: Context) : View(context) {
         val shell = continuousRect(pill, min(rig.radius.pos, min(pill.width, pill.height) / 2), 0.72)
         val bubble = rig.bubble?.let { scaled(it, rig.bubbleScale.pos) }
         val bubblePath = bubble?.let { continuousRect(it, it.height / 2, 0.72) }
-        drawStatusStack(canvas, shell, bubblePath)
         // The other half stays until it has slid under the main bar and the two are one shape.
         // Painting it first is what puts that lobe behind the bar instead of across its face.
         if (bubblePath != null) canvas.drawPath(bubblePath, black)
