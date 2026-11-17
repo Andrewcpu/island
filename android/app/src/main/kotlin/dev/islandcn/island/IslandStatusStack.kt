@@ -290,16 +290,27 @@ internal object IslandStatusStack {
 
     private fun software(result: AccessibilityService.ScreenshotResult): Bitmap? {
         val buffer = result.hardwareBuffer ?: return null
+        var hardware: Bitmap? = null
         return try {
-            val hardware = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace) ?: return null
-            val copy = Bitmap.createBitmap(hardware.width, hardware.height, Bitmap.Config.ARGB_8888)
-            Canvas(copy).drawBitmap(hardware, 0f, 0f, null)
-            hardware.recycle()
-            copy
+            // wrapHardwareBuffer is a HARDWARE bitmap. A software Canvas cannot draw it
+            // (IllegalArgumentException: Software rendering doesn't support hardware bitmaps).
+            // copy() readback is what produces pixels we can crop and diff.
+            hardware = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace) ?: return null
+            val copy = hardware.copy(Bitmap.Config.ARGB_8888, false)
+            if (copy == null) {
+                Log.w(TAG, "Screenshot copy returned null")
+                null
+            } else {
+                copy
+            }
         } catch (error: Exception) {
             Log.w(TAG, "Screenshot copy failed", error)
             null
         } finally {
+            try {
+                hardware?.recycle()
+            } catch (_: Exception) {
+            }
             try {
                 buffer.close()
             } catch (_: Exception) {
