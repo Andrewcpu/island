@@ -1216,7 +1216,9 @@ class IslandPillView(context: Context) : View(context) {
         val captionInTrail = !iconOnly && face.icon != null && face.id != "live" && face.id != "now-playing" && face.id != "battery" && face.id != "upload" && face.id != "transfer"
         val trailW = if (captionInTrail && caption.isNotEmpty()) max(preset.second, IslandModes.compactTextWidth(caption)) else preset.second
         val chargeText = if (face.id == "battery" || face.id == "low-battery") IslandModes.percentWidth(face.value) else 0.0
-        return Spec(face.id, face.priority, 0, face.group, preset.first, trailW, face.minimal, face.body, chargeText)
+        val widgetTrail = face.id == "now-playing" || face.id == "upload" || face.id == "transfer" || face.id == "battery" || face.id == "low-battery" || face.id == "live" || face.id == "call"
+        val splitTrail = if (!widgetTrail && face.trail.isNotEmpty() && trailW > 0) min(trailW, IslandModes.compactTextWidth(face.trail)) else 0.0
+        return Spec(face.id, face.priority, 0, face.group, preset.first, trailW, face.minimal, face.body, chargeText, splitTrail)
     }
 
     private fun reveal(): Float {

@@ -176,7 +176,16 @@ internal data class Spec(
     val expandedBody: Double,
     /** Measured width of the charging percentage. 0 unless this is the battery. */
     val chargeText: Double = 0.0,
-)
+    /**
+     * Trailing ear used while this activity is the large half of a split.
+     * Text ears are the measured string, so a short value sits against the lens
+     * instead of in a wide preset slot. 0 means use [trailing].
+     */
+    val splitTrail: Double = 0.0,
+) {
+    /** Trailing width of the large half. Text uses the measured string. */
+    val splitEar: Double get() = if (splitTrail > 0.5) min(splitTrail, trailing) else trailing
+}
 
 internal data class DRect(val left: Double, val top: Double, val right: Double, val bottom: Double) {
     val width: Double get() = right - left
@@ -622,7 +631,7 @@ internal class IslandRig {
             first.trailing,
             first.minimal,
             second.minimal,
-            first.leading to first.trailing,
+            first.leading to first.splitEar,
             second.leading to second.trailing,
             focus.expandedBody,
         )
@@ -693,17 +702,28 @@ internal class IslandRig {
         val attached = measure.splitAttached ?: return null
         val detached = measure.splitDetached ?: return null
         fun pairWidth(slots: Pair<Double, Double>, gap: Double) = slots.first + slots.second + if (slots.first > 0 && slots.second > 0) gap else 0.0
-        // The large half reads across the camera: icon in one ear, short value in the other.
-        // The detached pill stays the small half, past that trailing ear.
-        val ears = sides(attached.first, attached.second)
+        // Ears are measured from the lens, not the compact balance. A small clear
+        // gap, the content, and a short outer pad. The small pill sits just past that.
+        val ears = splitEars(attached.first, attached.second)
         val bubbleW = if (detached.second > 0) 62.18 else max(36.85, 6.42 + pairWidth(detached, 6.085) + 6.42)
         val sensorHalf = sensorWidth / 2
-        val left = -(sensorHalf + ears.first)
-        val right = sensorHalf + ears.second
-        val bubbleLeft = right + 7.82
+        val lensHalf = if (hole.width > 1.0) hole.width / 2.0 else sensorHalf
+        var left = -(lensHalf + ears.first)
+        var right = lensHalf + ears.second
+        if (left > -sensorHalf) left = -sensorHalf
+        if (right < sensorHalf) right = sensorHalf
+        val bubbleLeft = right + 6.0
         val bubbleRight = bubbleLeft + bubbleW
         if (bubbleRight - left > 290.0) return null
         return doubleArrayOf(left, right, bubbleLeft, bubbleRight)
+    }
+
+    /** How far a split ear extends past the lens edge. No compact balance. */
+    private fun splitEars(leading: Double, trailing: Double): Pair<Double, Double> {
+        val clear = 3.0
+        val outer = 5.5
+        fun ear(slot: Double) = if (slot > 0.5) clear + min(slot, 72.0) + outer else 0.0
+        return ear(leading) to ear(trailing)
     }
 
     private fun desired(): Kind {
@@ -959,16 +979,21 @@ internal class IslandRig {
                 trailing = DRect(left, pill.centerY - 10, left + w, pill.centerY + 10)
             }
         } else if (targetKind == Kind.MINIMAL && splitPair) {
+            val clear = 3.0
             if (first.leading > 0) {
                 val w = min(first.leading, 72.0)
-                var slotLeft = pill.left + 7.18
-                if (slotLeft + w > hole.left) slotLeft = hole.left - w
+                var slotLeft = hole.left - clear - w
+                val inner = pill.left + 5.5
+                if (slotLeft < inner) slotLeft = inner
+                if (slotLeft + w > hole.left - 1.0) slotLeft = hole.left - 1.0 - w
                 leading = DRect(slotLeft, pill.centerY - glyph / 2, slotLeft + w, pill.centerY + glyph / 2)
             }
-            if (first.trailing > 0) {
-                val w = min(first.trailing, 72.0)
-                var slotLeft = pill.right - 7.18 - w
-                if (slotLeft < hole.right) slotLeft = hole.right
+            if (first.splitEar > 0) {
+                val w = min(first.splitEar, 72.0)
+                var slotLeft = hole.right + clear
+                val inner = pill.right - 5.5 - w
+                if (slotLeft > inner) slotLeft = inner
+                if (slotLeft < hole.right + 1.0) slotLeft = hole.right + 1.0
                 trailing = DRect(slotLeft, pill.centerY - 10, slotLeft + w, pill.centerY + 10)
             }
         } else if (targetKind == Kind.EXPANDED) {
