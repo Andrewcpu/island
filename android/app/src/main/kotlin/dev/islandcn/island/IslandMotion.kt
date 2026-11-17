@@ -198,6 +198,8 @@ internal data class DRect(val left: Double, val top: Double, val right: Double, 
 
 internal class IslandRig {
     var onPressed: ((String) -> Unit)? = null
+    /** One tick when the island opens into an activity card. Not fired on collapse. */
+    var onExpand: (() -> Unit)? = null
     /** False for an activity that must stay compact, such as the settled unlock pill. */
     var canExpand: (String) -> Boolean = { true }
     var kind = Kind.IDLE
@@ -684,7 +686,7 @@ internal class IslandRig {
                 val focus = (expandedId?.let { byId[it] }) ?: visible().firstOrNull()
                 val height = IslandModes.expandedHeight(focus?.id, focus?.expandedBody ?: measure.expandedBody)
                 // Face ID is a shorter card than the full expanded island, and a taller one.
-                val half = if (focus?.id == "lock") min(full, 120.0) else full
+                val half = if (focus?.id == "lock") min(full, 146.0) else full
                 Shape(-half, half, expandedTop, height, 47.9, half - compactHeight, half, 0.0)
             }
         }
@@ -744,7 +746,9 @@ internal class IslandRig {
         val target = shape(next, measure)
         val idle = shape(Kind.IDLE, Measure())
         aim(transition, target, idle)
+        val opened = next == Kind.EXPANDED && from != Kind.EXPANDED
         kind = next
+        if (opened) onExpand?.invoke()
     }
 
     private fun transition(from: Kind, to: Kind, swap: Boolean, swelling: Boolean, alertReturn: Boolean): Transition {

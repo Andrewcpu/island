@@ -168,12 +168,13 @@ internal object IslandModes {
             "eta" -> 146.0
             "message" -> 76.0 + (body - 48.0).coerceAtLeast(0.0)
             "timer", "timer-done" -> 80.0
-            "lock" -> 154.0
+            "lock" -> 176.0
             "torch" -> 100.0
             "low-battery" -> 86.0
             else -> 70.0
         }
-        return (end + pad).coerceIn(84.0, 180.0)
+        val height = end + pad
+        return if (id == "lock") height.coerceIn(84.0, 210.0) else height.coerceIn(84.0, 180.0)
     }
 
     fun drawBubble(canvas: Canvas, id: String, accent: Int, progress: Float, bubble: DRect, now: Double, alpha: Int, art: Bitmap? = null, mark: String = "", playing: Boolean = false, icon: Bitmap? = null, charge: String = "", charging: Boolean = false) {
@@ -1131,14 +1132,14 @@ internal object IslandModes {
      */
     private fun faceIdMark(canvas: Canvas, pill: DRect, hole: DRect, now: Double, alpha: Int) {
         if (alpha <= 0) return
-        val top = hole.bottom + 4.0
-        val bottom = pill.bottom - 6.0
+        val top = hole.bottom + 18.0
+        val bottom = pill.bottom - 18.0
         val room = (bottom - top).coerceAtLeast(32.0)
         val cx = pill.centerX.toFloat()
         val cy = ((top + bottom) / 2.0).toFloat()
         // Inner-ring centerline is 1. Outer centerline 1.281, stroke 0.147.
         val outerEdge = 1.281f + 0.147f / 2f
-        val fit = min(room, (pill.width - 28.0).coerceAtLeast(32.0))
+        val fit = min(room, (pill.width - 64.0).coerceAtLeast(32.0))
         val radius = (fit / (2.0 * outerEdge)).toFloat()
         val strokeW = radius * 0.147f
         val breath = (0.5 + 0.5 * sin(now * 2.0 * PI / 3.2)).toFloat()

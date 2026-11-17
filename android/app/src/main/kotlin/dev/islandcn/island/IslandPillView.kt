@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.Choreographer
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -124,8 +125,14 @@ class IslandPillView(context: Context) : View(context) {
         isFocusable = false
         isFocusableInTouchMode = false
         rig.onPressed = { id -> onTap(id) }
+        rig.onExpand = { expandTick() }
         rig.canExpand = { id -> id != "lock" || !lockAuthenticated }
         IslandModes.install(context)
+    }
+
+    /** One short tick as the card starts opening. Collapse does not call this. */
+    private fun expandTick() {
+        performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
     }
 
     fun windowFrame(): IntArray {
