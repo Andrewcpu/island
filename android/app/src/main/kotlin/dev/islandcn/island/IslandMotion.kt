@@ -671,9 +671,11 @@ internal class IslandRig {
                 }
             }
             Kind.EXPANDED -> {
-                val half = (min(screenWidth, 402.0) - 2 * 13.83) / 2
+                val full = (min(screenWidth, 402.0) - 2 * 13.83) / 2
                 val focus = (expandedId?.let { byId[it] }) ?: visible().firstOrNull()
                 val height = IslandModes.expandedHeight(focus?.id, focus?.expandedBody ?: measure.expandedBody)
+                // Face ID is a shorter card than the full expanded island, and a taller one.
+                val half = if (focus?.id == "lock") min(full, 120.0) else full
                 Shape(-half, half, expandedTop, height, 47.9, half - compactHeight, half, 0.0)
             }
         }
@@ -691,14 +693,17 @@ internal class IslandRig {
         val attached = measure.splitAttached ?: return null
         val detached = measure.splitDetached ?: return null
         fun pairWidth(slots: Pair<Double, Double>, gap: Double) = slots.first + slots.second + if (slots.first > 0 && slots.second > 0) gap else 0.0
-        val attachedWidth = 6.59 + pairWidth(attached, 6.15) + 8.18
+        // The large half reads across the camera: icon in one ear, short value in the other.
+        // The detached pill stays the small half, past that trailing ear.
+        val ears = sides(attached.first, attached.second)
         val bubbleW = if (detached.second > 0) 62.18 else max(36.85, 6.42 + pairWidth(detached, 6.085) + 6.42)
         val sensorHalf = sensorWidth / 2
-        val left = -(sensorHalf + attachedWidth)
-        val bubbleLeft = sensorHalf + 7.82
+        val left = -(sensorHalf + ears.first)
+        val right = sensorHalf + ears.second
+        val bubbleLeft = right + 7.82
         val bubbleRight = bubbleLeft + bubbleW
         if (bubbleRight - left > 290.0) return null
-        return doubleArrayOf(left, sensorHalf, bubbleLeft, bubbleRight)
+        return doubleArrayOf(left, right, bubbleLeft, bubbleRight)
     }
 
     private fun desired(): Kind {
@@ -955,13 +960,16 @@ internal class IslandRig {
             }
         } else if (targetKind == Kind.MINIMAL && splitPair) {
             if (first.leading > 0) {
-                val w = min(first.leading, 36.0)
-                leading = DRect(pill.left + 6.59, pill.centerY - 11, pill.left + 6.59 + w, pill.centerY + 11)
+                val w = min(first.leading, 72.0)
+                var slotLeft = pill.left + 7.18
+                if (slotLeft + w > hole.left) slotLeft = hole.left - w
+                leading = DRect(slotLeft, pill.centerY - glyph / 2, slotLeft + w, pill.centerY + glyph / 2)
             }
             if (first.trailing > 0) {
                 val w = min(first.trailing, 72.0)
-                val left = sensor.left - 8.18 - w
-                trailing = DRect(left, pill.centerY - 10, left + w, pill.centerY + 10)
+                var slotLeft = pill.right - 7.18 - w
+                if (slotLeft < hole.right) slotLeft = hole.right
+                trailing = DRect(slotLeft, pill.centerY - 10, slotLeft + w, pill.centerY + 10)
             }
         } else if (targetKind == Kind.EXPANDED) {
             leading = DRect(pill.left + 18.5, pill.top + 18.18, pill.left + 18.5 + 52, pill.top + 18.18 + 52)

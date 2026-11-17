@@ -168,7 +168,7 @@ internal object IslandModes {
             "eta" -> 146.0
             "message" -> 76.0 + (body - 48.0).coerceAtLeast(0.0)
             "timer", "timer-done" -> 80.0
-            "lock" -> 108.0
+            "lock" -> 154.0
             "torch" -> 100.0
             "low-battery" -> 86.0
             else -> 70.0
@@ -1093,11 +1093,13 @@ internal object IslandModes {
         val bodyTop = cy - s * 0.15f
         val leftX = cx - s * 0.46f
         val rightX = cx + s * 0.46f
-        val shoulder = cy - s * 0.62f
+        // The arch grows taller as the right leg rises, so the open gap is obvious.
+        // The left foot stays buried. The free end stays on the right.
+        val shoulder = cy - s * (0.62f + 0.36f * lift)
         val radius = s * 0.46f
         val buried = cy + s * 0.18f
-        val raised = bodyTop - s * 0.22f
-        val rightFoot = buried + (raised - buried) * lift
+        val openFoot = min(bodyTop - s * 0.84f, shoulder - s * 0.04f)
+        val rightFoot = buried + (openFoot - buried) * lift
         val shackle = Path()
         shackle.moveTo(leftX, buried)
         shackle.lineTo(leftX, shoulder)
@@ -1129,14 +1131,15 @@ internal object IslandModes {
      */
     private fun faceIdMark(canvas: Canvas, pill: DRect, hole: DRect, now: Double, alpha: Int) {
         if (alpha <= 0) return
-        val top = hole.bottom + 8.0
-        val bottom = pill.bottom - 12.0
+        val top = hole.bottom + 4.0
+        val bottom = pill.bottom - 6.0
         val room = (bottom - top).coerceAtLeast(32.0)
         val cx = pill.centerX.toFloat()
         val cy = ((top + bottom) / 2.0).toFloat()
         // Inner-ring centerline is 1. Outer centerline 1.281, stroke 0.147.
         val outerEdge = 1.281f + 0.147f / 2f
-        val radius = (room / (2.0 * outerEdge)).toFloat()
+        val fit = min(room, (pill.width - 28.0).coerceAtLeast(32.0))
+        val radius = (fit / (2.0 * outerEdge)).toFloat()
         val strokeW = radius * 0.147f
         val breath = (0.5 + 0.5 * sin(now * 2.0 * PI / 3.2)).toFloat()
         val scale = 0.88f + 0.12f * breath
