@@ -28,9 +28,10 @@ import kotlin.math.min
  * Status-bar band behind the island. The sliding mask is the status-bar foreground:
  * clock, icons, and scrim. Wallpaper and app pixels stay transparent.
  * Each expand takes a new display shot and a new app-window shot before the island draws.
- * Nothing from an earlier screen, app, or expand is reused. The still plate is only the
- * app window's status-bar rows. A failed diff still slides clock, icons, and scrim over
- * that fresh plate. Pixels from below the bar are never stretched up.
+ * A missing app window does not skip the slide: clock, icons, and scrim from that fresh
+ * foreground still move. The still plate is the app window's status-bar rows when that
+ * shot exists, otherwise other pixels from those same rows. Nothing is taken from below
+ * the bar. The previous frame stays up until a new one is published.
  * The island window is never hidden. The pair is taken before this expand draws, and the
  * pre-expand pill rect is removed from the mask so the island is not part of the slide.
  * Nothing is written to disk.
@@ -121,7 +122,6 @@ internal object IslandStatusStack {
     fun captureBeforeDraw(done: () -> Unit) {
         val gen = ++captureGen
         onCaptured = done
-        publish(null)
         Choreographer.getInstance().postFrameCallback {
             if (gen != captureGen) return@postFrameCallback
             beginPair(gen)
@@ -317,13 +317,15 @@ internal object IslandStatusStack {
                     }
                 }
                 val slide = mask
-                if (slide != null && plate != null) {
+                if (slide != null) {
+                    // Plate first, while the island is still in the mask, so those pixels
+                    // are filled from the status-bar row instead of being copied through.
+                    val still = plate ?: coverBand(displayBand, slide)
                     if (island != null) clearRect(slide, island)
-                    built = Frame(plate, slide, screenW, status)
+                    built = Frame(still, slide, screenW, status)
                 } else {
-                    slide?.recycle()
                     plate?.recycle()
-                    if (report == null) report = "$reason; no fresh app band"
+                    if (report == null) report = "$reason; foreground found nothing"
                 }
                 displayBand.recycle()
             } catch (error: Exception) {
@@ -448,6 +450,75 @@ internal object IslandStatusStack {
     }
 
     private fun strip(width: Int, height: Int) = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
+    /**
+     * Still layer when the app window shot is missing. Masked pixels take the nearest
+     * unmasked pixel in the same status-bar row. A row that is entirely foreground borrows
+     * another row inside this band. Nothing is read from below the bar.
+     */
+    private fun coverBand(display: Bitmap, mask: Bitmap): Bitmap {
+        val width = display.width
+        val height = display.height
+        val src = IntArray(width * height)
+        val cut = IntArray(width * height)
+        display.getPixels(src, 0, width, 0, 0, width, height)
+        mask.getPixels(cut, 0, width, 0, 0, width, height)
+        val out = IntArray(width * height)
+        val rowHas = BooleanArray(height)
+        val nearestLeft = IntArray(width)
+        for (y in 0 until height) {
+            val row = y * width
+            var last = -1
+            var any = false
+            for (x in 0 until width) {
+                if (cut[row + x] ushr 24 == 0) {
+                    last = x
+                    any = true
+                }
+                nearestLeft[x] = last
+            }
+            rowHas[y] = any
+            last = -1
+            for (x in width - 1 downTo 0) {
+                val i = row + x
+                if (cut[i] ushr 24 == 0) {
+                    out[i] = if (src[i] ushr 24 == 0) 0 else src[i] or 0xFF000000.toInt()
+                    last = x
+                    continue
+                }
+                val left = nearestLeft[x]
+                val right = last
+                val pick = when {
+                    left < 0 && right < 0 -> -1
+                    left < 0 -> right
+                    right < 0 -> left
+                    x - left <= right - x -> left
+                    else -> right
+                }
+                out[i] = if (pick < 0) 0 else src[row + pick] or 0xFF000000.toInt()
+            }
+        }
+        for (y in 0 until height) {
+            if (rowHas[y]) continue
+            var donor = -1
+            var best = height
+            for (yy in 0 until height) {
+                if (!rowHas[yy]) continue
+                val distance = abs(yy - y)
+                if (distance < best) {
+                    best = distance
+                    donor = yy
+                }
+            }
+            if (donor < 0) continue
+            val row = y * width
+            val from = donor * width
+            for (x in 0 until width) out[row + x] = out[from + x]
+        }
+        val plate = strip(width, height)
+        plate.setPixels(out, 0, width, 0, 0, width, height)
+        return plate
+    }
 
     /** Top [status] rows of [src], scaled to the screen width. */
     private fun cropTop(src: Bitmap, screenW: Int, status: Int): Bitmap {
