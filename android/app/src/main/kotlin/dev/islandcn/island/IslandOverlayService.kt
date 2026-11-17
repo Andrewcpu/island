@@ -184,10 +184,10 @@ class IslandOverlayService : Service() {
 
     /** Hide both overlays so a display screenshot is the status bar without the island. */
     fun concealForCapture(hidden: Boolean) {
-        val visibility = if (hidden) View.INVISIBLE else View.VISIBLE
         val alpha = if (hidden) 0f else 1f
-        concealView(root, visibility, alpha)
-        concealView(band, visibility, alpha)
+        // The pill stays touchable. Alpha 0 keeps it out of the shot without cancelling a hold.
+        concealView(root, View.VISIBLE, alpha)
+        concealView(band, if (hidden) View.INVISIBLE else View.VISIBLE, alpha)
         if (!hidden) band?.invalidate()
     }
 
@@ -429,6 +429,7 @@ class IslandOverlayService : Service() {
             val host = instance ?: return
             val strip = host.band
             val open = (host.pill?.barSpread() ?: 0f) > 0.002f
+            if (open) IslandStatusStack.ensure()
             if (strip == null || strip.parent == null) {
                 if (open && !bandMissingLogged) {
                     bandMissingLogged = true

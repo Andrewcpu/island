@@ -8,12 +8,17 @@ import android.view.accessibility.AccessibilityEvent
 
 class IslandAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
+        android.util.Log.i("IslandOverlay", "Accessibility service connected")
         instance = this
-        serviceInfo = serviceInfo.apply {
-            flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-            eventTypes = eventTypes or
+        try {
+            val info = serviceInfo ?: throw IllegalStateException("serviceInfo null")
+            info.flags = info.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            info.eventTypes = info.eventTypes or
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED or
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            serviceInfo = info
+        } catch (error: Exception) {
+            android.util.Log.w("IslandOverlay", "Accessibility info update failed", error)
         }
         IslandStatusStack.attach(this)
         IslandOverlayService.onAccessibilityConnected(this)

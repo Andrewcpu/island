@@ -11,10 +11,9 @@ import android.view.View
 /**
  * Full-width status-bar strip under the island. It does not take touches.
  * Collapsed, it draws nothing, so the real status bar shows through.
- * While the pill's width spring is open, the difference mask is two halves split
- * at the camera: the left half slides off the left edge and the right half off
- * the right edge, by the same spread as that spring. Collapse runs it backwards.
- * The app-window band stays put, so wallpaper and the app do not travel with the clock.
+ * While the pill's width spring is open, the foreground mask is two halves split
+ * at the camera. Clock, icons, and scrim slide off. The background plate stays
+ * put, so wallpaper and the app do not travel with them. Collapse runs it backwards.
  */
 internal class IslandStatusBand(context: Context) : View(context) {
     var pill: IslandPillView? = null
