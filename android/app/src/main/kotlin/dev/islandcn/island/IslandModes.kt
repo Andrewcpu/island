@@ -85,6 +85,8 @@ internal object IslandModes {
     private var iconPrevious: Drawable? = null
     private var iconNext: Drawable? = null
     private var iconFlashlight: Drawable? = null
+    private var iconHeart: Drawable? = null
+    private var iconHeartOutline: Drawable? = null
     private var arcCx = 0.0
     private var arcCy = 0.0
     private var arcR = 0.0
@@ -106,6 +108,8 @@ internal object IslandModes {
         iconPrevious = ContextCompat.getDrawable(context, R.drawable.ic_skip_previous)?.mutate()
         iconNext = ContextCompat.getDrawable(context, R.drawable.ic_skip_next)?.mutate()
         iconFlashlight = ContextCompat.getDrawable(context, R.drawable.ic_flashlight)?.mutate()
+        iconHeart = ContextCompat.getDrawable(context, R.drawable.ic_favorite)?.mutate()
+        iconHeartOutline = ContextCompat.getDrawable(context, R.drawable.ic_favorite_border)?.mutate()
     }
 
     /**
@@ -445,30 +449,15 @@ internal object IslandModes {
         if (liked != null) {
             val heartX = pill.right - 34.0
             hits.like = DRect(heartX - 18, buttonY - 18, heartX + 18, buttonY + 18)
-            heart(canvas, heartX, buttonY, 22.0, liked, alpha)
+            val heartBox = 22.0
+            symbol(
+                canvas,
+                if (liked) iconHeart else iconHeartOutline,
+                DRect(heartX - heartBox / 2.0, buttonY - heartBox / 2.0, heartX + heartBox / 2.0, buttonY + heartBox / 2.0),
+                Color.WHITE,
+                alpha,
+            )
         }
-    }
-
-    /** Filled when the track is liked (the action is Unlike), outline when the action is Like. */
-    private fun heart(canvas: Canvas, cx: Double, cy: Double, size: Double, filled: Boolean, alpha: Int) {
-        val s = size.toFloat()
-        val x = cx.toFloat()
-        val y = cy.toFloat()
-        val path = android.graphics.Path()
-        path.moveTo(x, y + s * 0.36f)
-        path.cubicTo(x - s * 0.64f, y + s * 0.02f, x - s * 0.4f, y - s * 0.46f, x, y - s * 0.14f)
-        path.cubicTo(x + s * 0.4f, y - s * 0.46f, x + s * 0.64f, y + s * 0.02f, x, y + s * 0.36f)
-        path.close()
-        if (filled) {
-            fill.color = Color.WHITE
-            fill.alpha = alpha
-            canvas.drawPath(path, fill)
-            return
-        }
-        stroke.color = Color.WHITE
-        stroke.alpha = alpha
-        stroke.strokeWidth = (s * 0.09f).coerceAtLeast(1.4f)
-        canvas.drawPath(path, stroke)
     }
 
     /** The line uses the island width. It steps aside for [avoid] only when the glyphs run into it. */
