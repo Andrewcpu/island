@@ -12,8 +12,8 @@ import android.view.View
  * Full-width status-bar strip under the island. It does not take touches.
  * Collapsed, it draws nothing, so the real status bar shows through.
  * While the pill's width spring is open, the foreground mask is two halves split
- * at the camera. Clock, icons, and scrim slide off. The background plate stays
- * put, so wallpaper and the app do not travel with them. Collapse runs it backwards.
+ * at the camera. Clock, icons, and scrim slide off. The app window's status-bar
+ * pixels stay at their real coordinates. Collapse runs it backwards.
  */
 internal class IslandStatusBand(context: Context) : View(context) {
     var pill: IslandPillView? = null
@@ -61,8 +61,7 @@ internal class IslandStatusBand(context: Context) : View(context) {
         val shiftRight = spread * right.width
         paint.alpha = 255
         paint.isFilterBitmap = false
-        // Still app pixels cover the real status bar. The halves are opaque where they
-        // differ, so this plate does not tint them. Matching pixels stay transparent.
+        // App-window pixels from this band only. They are not a stretched row from below.
         if (base != null && !base.isRecycled) canvas.drawBitmap(base, 0f, 0f, paint)
         canvas.drawBitmap(left, -shiftLeft, 0f, paint)
         canvas.drawBitmap(right, left.width + shiftRight, 0f, paint)

@@ -31,6 +31,8 @@ import kotlin.math.min
  * The app-window difference is used when it actually separates those pixels. If that shot
  * is missing or the diff is empty or the whole band, the display band is filtered down to
  * the same foreground instead of skipping the animation or sliding the opaque band.
+ * The still plate is the app window's own status-bar pixels, at the same size and position.
+ * Nothing from lower on the screen is stretched up behind the island.
  * Nothing is written to disk.
  */
 internal object IslandStatusStack {
@@ -257,6 +259,8 @@ internal object IslandStatusStack {
             try {
                 // Both shots are already ARGB_8888 copies. Diff those, never the hardware buffers.
                 val displayBand = cropTop(display, screenW, status)
+                // App pixels that already sit in the status-bar rect. Same size, same place.
+                // A row from below the bar is only a classifier, never the drawn background.
                 val row = rowBelow(display, screenW, status)
                 var mask: Bitmap? = null
                 var plate: Bitmap? = null
@@ -264,10 +268,9 @@ internal object IslandStatusStack {
                 if (appBmp != null && app != null) {
                     val appBand = strip(screenW, status)
                     blit(appBand, appBmp, app.bounds, status)
+                    plate = appBand
                     val cut = difference(displayBand, appBand)
                     if (cut != null && useful(cut)) {
-                        fillHoles(appBand, row)
-                        plate = appBand
                         mask = cut.bitmap
                         report = "Status strip diff kept ${cut.kept} of ${cut.total}"
                     } else {
@@ -277,23 +280,25 @@ internal object IslandStatusStack {
                             else -> "app diff empty (${cut.kept} of ${cut.total})"
                         }
                         cut?.bitmap?.recycle()
-                        appBand.recycle()
                     }
                 }
-                val diffMask = mask
-                val diffPlate = plate
-                if (diffMask == null || diffPlate == null) {
+                if (mask == null) {
                     val fg = foreground(displayBand, row)
                     if (fg.kept < 24) {
                         fg.bitmap.recycle()
+                        plate?.recycle()
+                        plate = null
                         report = "$reason; foreground found nothing"
                     } else {
-                        val still = backgroundPlate(screenW, status, row)
+                        mask = fg.bitmap
                         report = "$reason; foreground kept ${fg.kept} of ${fg.total}"
-                        built = Frame(still, fg.bitmap, screenW, status)
                     }
-                } else {
-                    built = Frame(diffPlate, diffMask, screenW, status)
+                }
+                val slide = mask
+                val still = plate
+                if (slide != null) {
+                    val held = still ?: strip(screenW, status)
+                    built = Frame(held, slide, screenW, status)
                 }
                 displayBand.recycle()
             } catch (error: Exception) {
@@ -524,7 +529,10 @@ internal object IslandStatusStack {
         return kept
     }
 
-    /** One display row just below the status bar, scaled to the screen width. Wallpaper and app live here. */
+    /**
+     * One display row just under the status bar, used only to tell glyphs and scrim from wallpaper.
+     * It is not drawn. The still plate is the app window's status-bar pixels.
+     */
     private fun rowBelow(display: Bitmap, screenW: Int, status: Int): IntArray {
         val row = IntArray(screenW)
         if (display.width < 1 || display.height < 1 || screenW < 1) return row
@@ -537,36 +545,6 @@ internal object IslandStatusStack {
             row[x] = sample[sx]
         }
         return row
-    }
-
-    private fun backgroundPlate(width: Int, height: Int, row: IntArray): Bitmap {
-        val plate = strip(width, height)
-        val pixels = IntArray(width * height)
-        for (y in 0 until height) {
-            val start = y * width
-            for (x in 0 until width) {
-                val sample = if (row.isEmpty()) 0 else row[x % row.size]
-                pixels[start + x] = sample or 0xFF000000.toInt()
-            }
-        }
-        plate.setPixels(pixels, 0, width, 0, 0, width, height)
-        return plate
-    }
-
-    private fun fillHoles(plate: Bitmap, row: IntArray) {
-        val width = plate.width
-        val height = plate.height
-        val pixels = IntArray(width * height)
-        plate.getPixels(pixels, 0, width, 0, 0, width, height)
-        var hole = false
-        for (i in pixels.indices) {
-            if (pixels[i] ushr 24 == 0) {
-                val sample = if (row.isEmpty()) 0 else row[i % row.size]
-                pixels[i] = sample or 0xFF000000.toInt()
-                hole = true
-            }
-        }
-        if (hole) plate.setPixels(pixels, 0, width, 0, 0, width, height)
     }
 
     private fun isScrim(pixel: Int, ref: Int): Boolean {
