@@ -217,26 +217,13 @@ class IslandOverlayService : Service() {
             Log.w(TAG, "Status band align failed", error)
         }
         restorePill()
+        view.post { restorePill() }
     }
 
     private fun showStatus(frame: IslandStatusStack.Frame?) {
         heldFrame = frame
-        val view = band
-        if (view == null) return
-        view.setFrame(frame)
-        if (frame == null) return
-        val params = view.layoutParams as? WindowManager.LayoutParams ?: return
-        if (params.width == frame.widthPx && params.height == frame.statusPx) return
-        params.width = frame.widthPx.coerceAtLeast(1)
-        params.height = frame.statusPx.coerceAtLeast(1)
-        params.gravity = Gravity.TOP or Gravity.LEFT
-        params.disableMoveAnimation()
-        try {
-            window?.updateViewLayout(view, params)
-        } catch (error: Exception) {
-            Log.w(TAG, "Status band resize failed", error)
-        }
-        restorePill()
+        // Swap bitmaps only. Resizing this window shifts the centered pill and clips an ear.
+        band?.setFrame(frame)
     }
 
     fun applyMedia(track: IslandMedia.Track?) {
@@ -301,7 +288,13 @@ class IslandOverlayService : Service() {
         val nextX = if (centered && pill != null) left - (pill.screenPx - nextW) / 2 else left
         val nextY = top - shiftY
         val nextGravity = if (centered) Gravity.TOP or Gravity.CENTER_HORIZONTAL else Gravity.TOP or Gravity.LEFT
-        if (params.gravity == nextGravity && appliedX == nextX && appliedY == nextY && appliedW == nextW && appliedH == nextH) return
+        val loc = IntArray(2)
+        var drifted = false
+        if (view.isAttachedToWindow) {
+            view.getLocationOnScreen(loc)
+            if (!(loc[0] == 0 && loc[1] == 0 && left > 2)) drifted = kotlin.math.abs(loc[0] - left) > 2
+        }
+        if (!drifted && params.gravity == nextGravity && appliedX == nextX && appliedY == nextY && appliedW == nextW && appliedH == nextH) return
         params.gravity = nextGravity
         params.x = nextX
         params.y = nextY

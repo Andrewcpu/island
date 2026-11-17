@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PorterDuff
+import android.graphics.RectF
 import android.view.View
 
 /**
@@ -61,10 +62,19 @@ internal class IslandStatusBand(context: Context) : View(context) {
         val shiftRight = spread * right.width
         paint.alpha = 255
         paint.isFilterBitmap = false
+        val bandW = (left.width + right.width).toFloat().coerceAtLeast(1f)
+        val bandH = left.height.toFloat().coerceAtLeast(1f)
+        val viewW = width.toFloat().coerceAtLeast(1f)
+        val viewH = height.toFloat().coerceAtLeast(1f)
+        canvas.save()
+        canvas.scale(viewW / bandW, viewH / bandH)
         // App band first, so it covers the real status bar. Only the content layer slides.
-        if (base != null && !base.isRecycled) canvas.drawBitmap(base, 0f, 0f, paint)
+        if (base != null && !base.isRecycled) {
+            canvas.drawBitmap(base, null, RectF(0f, 0f, bandW, bandH), paint)
+        }
         canvas.drawBitmap(left, -shiftLeft, 0f, paint)
         canvas.drawBitmap(right, left.width + shiftRight, 0f, paint)
+        canvas.restore()
     }
 
     private fun splitAt(width: Int): Int {

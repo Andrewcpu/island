@@ -27,11 +27,10 @@ import kotlin.math.min
 /**
  * Status-bar band behind the island. The sliding mask is the status-bar foreground:
  * clock, icons, and scrim. Wallpaper and app pixels stay transparent.
- * Each expand takes a new display shot and a new app-window shot before the island draws.
- * A missing app window does not skip the slide: clock, icons, and scrim from that fresh
- * foreground still move. The still plate is the app window's status-bar rows when that
- * shot exists, otherwise other pixels from those same rows. Nothing is taken from below
- * the bar. The previous frame stays up until a new one is published.
+ * Each expand discards whatever was captured earlier, then takes a new display shot and
+ * app-window shot of the screen that is showing before the card draws. A missing app
+ * window still publishes that fresh foreground. The still plate is the app status-bar
+ * rows when the shot has them, otherwise other pixels from those same rows.
  * The island window is never hidden. The pair is taken before this expand draws, and the
  * pre-expand pill rect is removed from the mask so the island is not part of the slide.
  * Nothing is written to disk.
@@ -122,6 +121,8 @@ internal object IslandStatusStack {
     fun captureBeforeDraw(done: () -> Unit) {
         val gen = ++captureGen
         onCaptured = done
+        // A lock-screen or earlier-app frame is not this expand. Clear it before the shot.
+        if (frame != null) publish(null)
         Choreographer.getInstance().postFrameCallback {
             if (gen != captureGen) return@postFrameCallback
             beginPair(gen)
@@ -357,7 +358,7 @@ internal object IslandStatusStack {
 
     private fun finish(next: Frame?, looked: Boolean) {
         if (!looked) return
-        if (next != null || frame == null) publish(next)
+        if (next != null) publish(next)
         inflight = false
     }
 
